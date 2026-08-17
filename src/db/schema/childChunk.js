@@ -4,6 +4,18 @@ import mongoose from "mongoose";
 
 const childChunkSchema = new mongoose.Schema(
   {
+    // Denormalized from ParentChunk.documentId. Atlas Vector Search can
+    // only pre-filter on fields present on the indexed document itself —
+    // it can't follow the parentId -> ParentChunk -> documentId hop — so
+    // this is kept in sync at write time purely to make
+    // "search within this document" queries possible.
+    documentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Document",
+      required: true,
+      index: true,
+    },
+
     parentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ParentChunk",
@@ -36,9 +48,6 @@ const childChunkSchema = new mongoose.Schema(
   }
 );
 
-const ChildChunk = mongoose.model(
-  "ChildChunk",
-  childChunkSchema
-);
+const ChildChunk = mongoose.model("ChildChunk", childChunkSchema);
 
 export default ChildChunk;

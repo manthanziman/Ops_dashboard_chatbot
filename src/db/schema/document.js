@@ -1,3 +1,7 @@
+// models/Document.js
+
+import mongoose from "mongoose";
+
 const documentSchema = new mongoose.Schema(
   {
     name: {
@@ -30,13 +34,7 @@ const documentSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: [
-        "uploaded",
-        "processing",
-        "completed",
-        "failed",
-        "deleted",
-      ],
+      enum: ["uploaded", "processing", "completed", "failed", "deleted"],
       default: "uploaded",
     },
   },
@@ -44,3 +42,7 @@ const documentSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+const Document = mongoose.model("Document", documentSchema);
+
+export default Document;

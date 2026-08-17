@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { uploadDocument } from "../modules/document/controller.js";
+import { uploadDocument, updateDocument, readDocument, readDocuments,  deleteDocument } from "../modules/document/controller.js";
 
 const router = express.Router();
 

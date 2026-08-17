@@ -1,4 +1,4 @@
-// parentChunk.js
+// models/ParentChunk.js
 
 import mongoose from "mongoose";
 
@@ -21,6 +21,14 @@ const parentChunkSchema = new mongoose.Schema(
       required: true,
     },
 
+    // SHA-256 of `text`. Lets a re-chunk of an updated file be diffed
+    // against what's already stored, without comparing full text.
+    contentHash: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
     startPage: {
       type: Number,
       required: true,
@@ -41,9 +49,6 @@ parentChunkSchema.index({
   index: 1,
 });
 
-const ParentChunk = mongoose.model(
-  "ParentChunk",
-  parentChunkSchema
-);
+const ParentChunk = mongoose.model("ParentChunk", parentChunkSchema);
 
 export default ParentChunk;
