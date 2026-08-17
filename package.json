@@ -1,0 +1,28 @@
+{
+  "name": "ops_dashboard_chatbot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@firecrawl/pdf-inspector": "^1.14.1",
+    "@google/genai": "^2.17.0",
+    "@langchain/textsplitters": "^1.0.1",
+    "@llamaindex/liteparse": "^2.12.0",
+    "@opendataloader/pdf": "^2.5.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.9.2",
+    "multer": "^2.2.0",
+    "nodemon": "^3.1.14",
+    "uuid": "^14.0.1"
+  }
+}
