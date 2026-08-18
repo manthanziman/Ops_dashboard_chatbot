@@ -5,9 +5,9 @@ import mongoose from "mongoose";
 import chunkDocument, { createChildren, hashText } from "../../services/chunking.js";
 import { embedChildren } from "../../services/embedding.js";
 
-import Document from "../../db/schema/Document.js";
-import ParentChunk from "../../db/schema/ParentChunk.js";
-import ChildChunk from "../../db/schema/ChildChunk.js";
+import Document from "../../db/schema/document.js";
+import ParentChunk from "../../db/schema/parentChunk.js";
+import ChildChunk from "../../db/schema/childChunk.js";
 
 // -----------------------------------------------------------------------------
 // Create + process a document

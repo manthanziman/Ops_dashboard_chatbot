@@ -4,7 +4,7 @@ const EMBEDDING_MODEL = "gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 768;
 
 const CHAT_MODEL =
-  process.env.GEMINI_CHAT_MODEL || "gemini-2.5-flash";
+  process.env.GEMINI_CHAT_MODEL || "gemini-3.6-flash";
 
 let genAI = null;
 

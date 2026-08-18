@@ -6,6 +6,7 @@ import dns from 'dns';
 import connectDB from './db/dbConnection.js';
 import documentRouter from './routes/document.routes.js';
 import userRouter from './routes/user.routes.js';
+import chatRouter from './routes/chat.routes.js';
 
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 dotenv.config();
@@ -18,6 +19,7 @@ app.use(cors());
 app.use(express.json());
 app.use('/api', documentRouter);
 app.use('/api', userRouter);
+app.use('/api', chatRouter);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ success: true, message: 'Server is healthy.' });

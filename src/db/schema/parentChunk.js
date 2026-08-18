@@ -49,6 +49,6 @@ parentChunkSchema.index({
   index: 1,
 });
 
-const ParentChunk = mongoose.model("ParentChunk", parentChunkSchema);
+const ParentChunk = mongoose.models.ParentChunk || mongoose.model("ParentChunk", parentChunkSchema);
 
 export default ParentChunk;

@@ -48,6 +48,6 @@ const childChunkSchema = new mongoose.Schema(
   }
 );
 
-const ChildChunk = mongoose.model("ChildChunk", childChunkSchema);
+const ChildChunk = mongoose.models.ChildChunk || mongoose.model("ChildChunk", childChunkSchema);
 
 export default ChildChunk;
