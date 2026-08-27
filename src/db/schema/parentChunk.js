@@ -1,5 +1,3 @@
-// models/ParentChunk.js
-
 import mongoose from "mongoose";
 
 const parentChunkSchema = new mongoose.Schema(
@@ -21,8 +19,6 @@ const parentChunkSchema = new mongoose.Schema(
       required: true,
     },
 
-    // SHA-256 of `text`. Lets a re-chunk of an updated file be diffed
-    // against what's already stored, without comparing full text.
     contentHash: {
       type: String,
       required: true,

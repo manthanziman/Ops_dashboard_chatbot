@@ -6,8 +6,11 @@ import {
   getChatSession,
   sendMessage,
 } from "../modules/chat/controller.js";
+import { authenticate } from "../middleware/auth.js";
 
 const router = express.Router();
+
+router.use(authenticate);
 
 router.post("/chat/sessions", createChatSession);
 router.get("/chat/sessions", listChatSessions);

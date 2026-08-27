@@ -24,7 +24,7 @@ const uploadDocument = async (req, res) => {
       });
     }
 
-    const userId = req.user?._id ?? req.body.userId;
+    const userId = req.user?._id;
 
     if (!userId) {
       return res.status(401).json({
@@ -33,62 +33,86 @@ const uploadDocument = async (req, res) => {
       });
     }
 
-    // 1. Create the document record up front so we have an id to
-    //    associate chunks with, and a durable "processing" state
-    //    the client can poll if this ever moves to a background job.
-    document = await Document.create({
+    // 1. Duplicate check: same user, same name, same content hash and
+    //    not soft-deleted. This is what stops the same file from being
+    //    ingested twice under separate document ids — the update
+    //    endpoint is deliberately not involved in this decision, it
+    //    only ever acts on a documentId the client already has.
+    const contentHash = hashText(req.file.buffer);
+
+    const duplicate = await Document.findOne({
+      userId,
+      name: req.file.originalname,
+      contentHash,
+      deletedAt: null,
+    });
+
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        error: "This document already exists.",
+        result: {
+          documentId: duplicate._id,
+          deletedAt: duplicate.deletedAt,
+        },
+      });
+    }
+
+    document = new Document({
       name: req.file.originalname,
       mimeType: req.file.mimetype,
       size: req.file.size,
       path: req.file.path ?? req.file.filename ?? req.file.originalname,
+      contentHash,
       userId,
-      status: "processing",
     });
 
-    // 2. Parse + chunk the PDF (no DB writes yet).
+    // Parse, chunk, and embed before opening the transaction.
     const { meta, parents, children } = await chunkDocument({
       buffer: req.file.buffer,
       documentId: document._id,
     });
 
-    // 3. Embed the child chunks.
+    // 4. Embed the child chunks.
     const embeddings = await embedChildren(children);
 
-    // 4. Persist parents. chunkDocument() gives each parent a
+    // Persist the document, parents, and children atomically. chunkDocument() gives each parent a
     //    temporary uuid `_id` only to link children -> parents
     //    in-memory. Mongo assigns the real ObjectId on insert, so we
     //    build a lookup from the temporary id to the persisted one.
-    const savedParents = await ParentChunk.insertMany(
-      parents.map((parent) => ({
-        documentId: document._id,
-        index: parent.index,
-        text: parent.text,
-        contentHash: parent.contentHash,
-        startPage: parent.startPage,
-        endPage: parent.endPage,
-      }))
-    );
+    let savedParents;
+    let savedChildren;
+    await mongoose.connection.transaction(async (session) => {
+      await document.save({ session });
 
-    const parentIdMap = new Map(
-      parents.map((parent, i) => [parent._id, savedParents[i]._id])
-    );
+      savedParents = await ParentChunk.insertMany(
+        parents.map((parent) => ({
+          documentId: document._id,
+          index: parent.index,
+          text: parent.text,
+          contentHash: parent.contentHash,
+          startPage: parent.startPage,
+          endPage: parent.endPage,
+        })),
+        { session }
+      );
 
-    // 5. Persist children with embeddings attached, pointing at the
-    //    real ParentChunk ObjectIds.
-    const savedChildren = await ChildChunk.insertMany(
-      children.map((child, i) => ({
-        documentId: document._id,
-        parentId: parentIdMap.get(child.parentId),
-        index: child.index,
-        text: child.text,
-        pageNumber: child.pageNumber,
-        embedding: embeddings[i],
-      }))
-    );
+      const parentIdMap = new Map(
+        parents.map((parent, i) => [parent._id, savedParents[i]._id])
+      );
 
-    // 6. Mark the document as completed.
-    document.status = "completed";
-    await document.save();
+      savedChildren = await ChildChunk.insertMany(
+        children.map((child, i) => ({
+          documentId: document._id,
+          parentId: parentIdMap.get(child.parentId),
+          index: child.index,
+          text: child.text,
+          pageNumber: child.pageNumber,
+          embedding: embeddings[i],
+        })),
+        { session }
+      );
+    });
 
     return res.status(200).json({
       success: true,
@@ -101,11 +125,6 @@ const uploadDocument = async (req, res) => {
     });
   } catch (error) {
     console.error("Document processing failed:", error);
-
-    if (document) {
-      document.status = "failed";
-      await document.save().catch(() => {});
-    }
 
     return res.status(500).json({
       success: false,
@@ -138,7 +157,7 @@ const renameDocument = async (req, res) => {
   }
 
   const document = await Document.findOneAndUpdate(
-    { _id: id, userId: req.user?._id, status: { $ne: "deleted" } },
+    { _id: id, userId: req.user?._id, deletedAt: null },
     { name: String(name).trim() },
     { new: true }
   );
@@ -156,27 +175,19 @@ const reprocessDocument = async (req, res) => {
   const document = await Document.findOne({
     _id: id,
     userId: req.user?._id,
-    status: { $ne: "deleted" },
+    deletedAt: null,
   });
 
   if (!document) {
     return res.status(404).json({ success: false, error: "Document not found." });
   }
 
-  document.status = "processing";
-  await document.save();
-
   try {
-    // 1. Re-chunk the new file version (parsing + splitting only — no
-    //    embedding or DB writes yet).
     const { parents: newParents } = await chunkDocument({
       buffer: req.file.buffer,
       documentId: document._id,
     });
 
-    // 2. Load existing parents for this document, bucketed by hash so
-    //    duplicate-content sections are matched one-to-one rather than
-    //    all collapsing onto a single old parent.
     const existingParents = await ParentChunk.find({ documentId: document._id }).lean();
 
     const existingByHash = new Map();
@@ -186,8 +197,8 @@ const reprocessDocument = async (req, res) => {
       existingByHash.set(parent.contentHash, bucket);
     }
 
-    const changedParents = []; // new content -> insert + (re)embed children
-    const repositionOps = []; // unchanged content, but moved -> cheap metadata update
+    const changedParents = [];
+    const repositionOps = [];
 
     for (const parent of newParents) {
       const bucket = existingByHash.get(parent.contentHash);
@@ -216,66 +227,61 @@ const reprocessDocument = async (req, res) => {
       }
     }
 
-    // Anything left in the buckets had no match in the new document at all.
     const removedParents = [...existingByHash.values()].flat();
 
-    // 3. Apply removals (parent + its children).
-    if (removedParents.length) {
-      const removedParentIds = removedParents.map((parent) => parent._id);
-
-      await ChildChunk.deleteMany({ parentId: { $in: removedParentIds } });
-      await ParentChunk.deleteMany({ _id: { $in: removedParentIds } });
-    }
-
-    // 4. Apply repositions for unchanged-but-moved parents.
-    if (repositionOps.length) {
-      await ParentChunk.bulkWrite(repositionOps);
-    }
-
-    // 5. Insert changed/new parents, then split + embed only their
-    //    children — the expensive step is scoped to just this subset.
+    const newChildren = changedParents.length ? await createChildren(changedParents) : [];
+    const newEmbeddings = changedParents.length ? await embedChildren(newChildren) : [];
     let insertedChildrenCount = 0;
 
-    if (changedParents.length) {
-      const savedChangedParents = await ParentChunk.insertMany(
-        changedParents.map((parent) => ({
-          documentId: document._id,
-          index: parent.index,
-          text: parent.text,
-          contentHash: parent.contentHash,
-          startPage: parent.startPage,
-          endPage: parent.endPage,
-        }))
-      );
+    await mongoose.connection.transaction(async (session) => {
+      if (removedParents.length) {
+        const removedParentIds = removedParents.map((parent) => parent._id);
+        await ChildChunk.deleteMany({ parentId: { $in: removedParentIds } }, { session });
+        await ParentChunk.deleteMany({ _id: { $in: removedParentIds } }, { session });
+      }
 
-      const changedParentIdMap = new Map(
-        changedParents.map((parent, i) => [parent._id, savedChangedParents[i]._id])
-      );
+      if (repositionOps.length) {
+        await ParentChunk.bulkWrite(repositionOps, { session });
+      }
 
-      const newChildren = await createChildren(changedParents);
-      const newEmbeddings = await embedChildren(newChildren);
+      if (changedParents.length) {
+        const savedChangedParents = await ParentChunk.insertMany(
+          changedParents.map((parent) => ({
+            documentId: document._id,
+            index: parent.index,
+            text: parent.text,
+            contentHash: parent.contentHash,
+            startPage: parent.startPage,
+            endPage: parent.endPage,
+          })),
+          { session }
+        );
 
-      const savedChildren = await ChildChunk.insertMany(
-        newChildren.map((child, i) => ({
-          documentId: document._id,
-          parentId: changedParentIdMap.get(child.parentId),
-          index: child.index,
-          text: child.text,
-          pageNumber: child.pageNumber,
-          embedding: newEmbeddings[i],
-        }))
-      );
+        const changedParentIdMap = new Map(
+          changedParents.map((parent, i) => [parent._id, savedChangedParents[i]._id])
+        );
+        const savedChildren = await ChildChunk.insertMany(
+          newChildren.map((child, i) => ({
+            documentId: document._id,
+            parentId: changedParentIdMap.get(child.parentId),
+            index: child.index,
+            text: child.text,
+            pageNumber: child.pageNumber,
+            embedding: newEmbeddings[i],
+          })),
+          { session }
+        );
+        insertedChildrenCount = savedChildren.length;
+      }
 
-      insertedChildrenCount = savedChildren.length;
-    }
-
-    // 6. Update file metadata (not the name — renaming is a separate,
-    //    explicit action via renameDocument) and mark completed.
-    document.mimeType = req.file.mimetype ?? document.mimeType;
-    document.size = req.file.size ?? document.size;
-    document.path = req.file.path ?? req.file.filename ?? document.path;
-    document.status = "completed";
-    await document.save();
+      document.set({
+        mimeType: req.file.mimetype ?? document.mimeType,
+        size: req.file.size ?? document.size,
+        path: req.file.path ?? req.file.filename ?? document.path,
+        contentHash: hashText(req.file.buffer),
+      });
+      await document.save({ session });
+    });
 
     return res.status(200).json({
       success: true,
@@ -290,9 +296,6 @@ const reprocessDocument = async (req, res) => {
     });
   } catch (error) {
     console.error("Document reprocessing failed:", error);
-
-    document.status = "failed";
-    await document.save().catch(() => {});
 
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -328,7 +331,7 @@ const readDocument = async (req, res) => {
     const document = await Document.findOne({
       _id: id,
       userId: req.user?._id,
-      status: { $ne: "deleted" },
+      deletedAt: null,
     });
 
     if (!document) {
@@ -358,7 +361,7 @@ const readDocuments = async (req, res) => {
 
     const filter = {
       userId: req.user?._id,
-      status: { $ne: "deleted" },
+      deletedAt: null,
     };
 
     const [documents, total] = await Promise.all([
@@ -399,21 +402,20 @@ const deleteDocument = async (req, res) => {
 
     const document = await Document.findOne({ _id: id, userId: req.user?._id });
 
-    if (!document || document.status === "deleted") {
+    if (!document || document.deletedAt) {
       return res.status(404).json({ success: false, error: "Document not found." });
     }
 
-    await Promise.all([
-      ChildChunk.deleteMany({ documentId: document._id }),
-      ParentChunk.deleteMany({ documentId: document._id }),
-    ]);
-
-    document.status = "deleted";
-    await document.save();
+    await mongoose.connection.transaction(async (session) => {
+      await ChildChunk.deleteMany({ documentId: document._id }, { session });
+      await ParentChunk.deleteMany({ documentId: document._id }, { session });
+      document.deletedAt = new Date();
+      await document.save({ session });
+    });
 
     return res.status(200).json({
       success: true,
-      result: { _id: document._id, status: document.status },
+      result: { _id: document._id, deletedAt: document.deletedAt },
     });
   } catch (error) {
     console.error("Document deletion failed:", error);

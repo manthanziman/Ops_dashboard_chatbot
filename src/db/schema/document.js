@@ -1,5 +1,3 @@
-// models/Document.js
-
 import mongoose from "mongoose";
 
 const documentSchema = new mongoose.Schema(
@@ -25,6 +23,12 @@ const documentSchema = new mongoose.Schema(
       required: true,
     },
 
+    contentHash: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -32,10 +36,9 @@ const documentSchema = new mongoose.Schema(
       index: true,
     },
 
-    status: {
-      type: String,
-      enum: ["uploaded", "processing", "completed", "failed", "deleted"],
-      default: "uploaded",
+    deletedAt: {
+      type: Date,
+      default: null,
     },
   },
   {

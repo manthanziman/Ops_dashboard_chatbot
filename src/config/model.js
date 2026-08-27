@@ -3,8 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 const EMBEDDING_MODEL = "gemini-embedding-2";
 const EMBEDDING_DIMENSIONS = 768;
 
-const CHAT_MODEL =
-  process.env.GEMINI_CHAT_MODEL || "gemini-3.6-flash";
+const CHAT_MODEL = process.env.GEMINI_CHAT_MODEL || "gemini-3.6-flash";
 
 let genAI = null;
 

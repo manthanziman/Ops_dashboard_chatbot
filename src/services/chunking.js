@@ -35,9 +35,10 @@ const parsePdf = async (buffer) => {
 
   const parser = new LiteParse({
     outputFormat: "json",
-    ocrEnabled: true,
+    imageMode: "placeholder",
+    extractBlocks: true,
     extractLinks: true,
-    keepHeadersFooters: true,
+    keepHeadersFooters: true, 
     extractStructureTree: true,
     quiet: true,
   });
@@ -50,10 +51,11 @@ const parsePdf = async (buffer) => {
 // -----------------------------------------------------------------------------
 
 const createLogicalParents = (parsed) => {
+  console.log(parsed)
   const pages = Array.isArray(parsed?.pages) ? parsed.pages : [];
 
   const structureTree = parsed?.structureTree ?? parsed?.structure_tree ?? null;
-
+  // console.log(structureTree)
   if (!pages.length) {
     return [];
   }
@@ -62,7 +64,7 @@ const createLogicalParents = (parsed) => {
 
   for (const page of pages) {
     const textItems = Array.isArray(page?.textItems) ? page.textItems : [];
-
+    console.log(page.structureTree)
     for (const item of textItems) {
       const id = item?.markedContentId ?? item?.marked_content_id;
 

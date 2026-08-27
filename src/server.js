@@ -7,6 +7,7 @@ import connectDB from './db/dbConnection.js';
 import documentRouter from './routes/document.routes.js';
 import userRouter from './routes/user.routes.js';
 import chatRouter from './routes/chat.routes.js';
+import authRouter from './routes/auth.routes.js';
 
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 dotenv.config();
@@ -17,6 +18,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use('/api', authRouter);
 app.use('/api', documentRouter);
 app.use('/api', userRouter);
 app.use('/api', chatRouter);

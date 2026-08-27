@@ -2,6 +2,7 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 
 import User from "../../db/schema/user.js";
+import jwt from "jsonwebtoken";
 
 const hashPassword = (password) => {
   return crypto.createHash("sha256").update(String(password)).digest("hex");
@@ -11,6 +12,34 @@ const sanitizeUser = (user) => {
   const plainUser = user.toObject ? user.toObject() : { ...user };
   delete plainUser.password;
   return plainUser;
+};
+
+const issueToken = (user) => jwt.sign(
+  { sub: String(user._id), role: user.role },
+  process.env.JWT_SECRET,
+  { expiresIn: "1d" }
+);
+
+const signupUser = (req, res) => {
+  req.body = { ...req.body, role: "user" };
+  return createUser(req, res);
+};
+
+const loginUser = async (req, res) => {
+  try {
+    const email = String(req.body.email ?? "").trim().toLowerCase();
+    const password = String(req.body.password ?? "");
+    const user = await User.findOne({ email });
+
+    if (!user || !user.isActive || hashPassword(password) !== user.password) {
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
+
+    return res.status(200).json({ success: true, token: issueToken(user), result: sanitizeUser(user) });
+  } catch (error) {
+    console.error("User login failed:", error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
 };
 
 const createUser = async (req, res) => {
@@ -214,4 +243,4 @@ const deleteUser = async (req, res) => {
   }
 };
 
-export { createUser, readUsers, readUser, updateUser, deleteUser };
+export { createUser, signupUser, loginUser, readUsers, readUser, updateUser, deleteUser };

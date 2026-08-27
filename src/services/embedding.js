@@ -10,7 +10,7 @@ import {
 // Configuration
 // -----------------------------------------------------------------------------
 
-const EMBEDDING_BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE || 20);
+const EMBEDDING_BATCH_SIZE = Number(process.env.EMBEDDING_BATCH_SIZE || 50);
 const EMBEDDING_MAX_RETRIES = Number(process.env.EMBEDDING_MAX_RETRIES || 5);
 const EMBEDDING_INITIAL_RETRY_DELAY_MS = Number(
   process.env.EMBEDDING_INITIAL_RETRY_DELAY_MS || 1000

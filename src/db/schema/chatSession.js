@@ -36,12 +36,6 @@ const chatSessionSchema = new mongoose.Schema(
       default: "New chat",
       trim: true,
     },
-    status: {
-      type: String,
-      enum: ["active", "archived"],
-      default: "active",
-      index: true,
-    },
     messages: [messageSchema],
     lastMessageAt: {
       type: Date,
