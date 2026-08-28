@@ -8,6 +8,13 @@ const documentSchema = new mongoose.Schema(
       trim: true,
     },
 
+    description: {
+      type: String,
+      required: true,
+      trim: true,
+      default: "",
+    },
+
     mimeType: {
       type: String,
       required: true,

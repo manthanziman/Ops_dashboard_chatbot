@@ -60,6 +60,7 @@ const uploadDocument = async (req, res) => {
 
     document = new Document({
       name: req.file.originalname,
+      description: req.body.description,
       mimeType: req.file.mimetype,
       size: req.file.size,
       path: req.file.path ?? req.file.filename ?? req.file.originalname,
@@ -136,7 +137,7 @@ const uploadDocument = async (req, res) => {
 // -----------------------------------------------------------------------------
 // Update
 //
-// - No file in the request  -> metadata-only rename.
+// - No file in the request  -> metadata-only rename or description update.
 // - A new file in the request -> diff-based reprocessing: re-chunk the new
 //   file, match new parents against stored ones by contentHash, and only
 //   touch what actually changed:
@@ -159,6 +160,30 @@ const renameDocument = async (req, res) => {
   const document = await Document.findOneAndUpdate(
     { _id: id, userId: req.user?._id, deletedAt: null },
     { name: String(name).trim() },
+    { new: true }
+  );
+
+  if (!document) {
+    return res.status(404).json({ success: false, error: "Document not found." });
+  }
+
+  return res.status(200).json({ success: true, result: document });
+};
+
+const updateDescription = async (req, res) => {
+  const { id } = req.params;
+  const { description } = req.body;
+
+  if (description === undefined || description === null) {
+    return res.status(400).json({
+      success: false,
+      error: "A description is required.",
+    });
+  }
+
+  const document = await Document.findOneAndUpdate(
+    { _id: id, userId: req.user?._id, deletedAt: null },
+    { description: String(description).trim() },
     { new: true }
   );
 
@@ -309,7 +334,13 @@ const updateDocument = async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid document id." });
     }
 
-    return req.file ? reprocessDocument(req, res) : renameDocument(req, res);
+    if (req.file) {
+      return reprocessDocument(req, res);
+    }
+
+    return Object.prototype.hasOwnProperty.call(req.body, "description")
+      ? updateDescription(req, res)
+      : renameDocument(req, res);
   } catch (error) {
     console.error("Document update failed:", error);
     return res.status(500).json({ success: false, error: error.message });
@@ -389,7 +420,7 @@ const readDocuments = async (req, res) => {
 };
 
 // -----------------------------------------------------------------------------
-// Delete (soft-delete the document, hard-delete its chunks)
+// Delete (hard-delete the document and its chunks)
 // -----------------------------------------------------------------------------
 
 const deleteDocument = async (req, res) => {
@@ -409,13 +440,12 @@ const deleteDocument = async (req, res) => {
     await mongoose.connection.transaction(async (session) => {
       await ChildChunk.deleteMany({ documentId: document._id }, { session });
       await ParentChunk.deleteMany({ documentId: document._id }, { session });
-      document.deletedAt = new Date();
-      await document.save({ session });
+      await Document.deleteOne({ _id: document._id }, { session });
     });
 
     return res.status(200).json({
       success: true,
-      result: { _id: document._id, deletedAt: document.deletedAt },
+      result: { _id: document._id },
     });
   } catch (error) {
     console.error("Document deletion failed:", error);
