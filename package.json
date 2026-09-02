@@ -21,9 +21,14 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-to-markdown": "^2.1.2",
     "mongoose": "^9.9.2",
     "multer": "^2.2.0",
     "nodemon": "^3.1.14",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
     "uuid": "^14.0.1"
   }
 }

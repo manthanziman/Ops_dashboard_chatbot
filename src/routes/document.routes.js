@@ -56,7 +56,7 @@ export async function parsePdfController(req, res) {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Failed to parse pdf document.",
     });
   }
 }

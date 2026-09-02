@@ -21,8 +21,7 @@ const CHILD_CHUNK_OVERLAP = 120;
 // same, so unchanged parents (and their children) never need to be touched.
 // -----------------------------------------------------------------------------
 
-const hashText = (text) =>
-  crypto.createHash("sha256").update(String(text)).digest("hex");
+const hashText = (text) => crypto.createHash("sha256").update(String(text)).digest("hex");
 
 // -----------------------------------------------------------------------------
 // LiteParse
@@ -51,11 +50,11 @@ const parsePdf = async (buffer) => {
 // -----------------------------------------------------------------------------
 
 const createLogicalParents = (parsed) => {
-  console.log(parsed)
+  // console.log(parsed)
   const pages = Array.isArray(parsed?.pages) ? parsed.pages : [];
 
   const structureTree = parsed?.structureTree ?? parsed?.structure_tree ?? null;
-  // console.log(structureTree)
+  console.log(structureTree)
   if (!pages.length) {
     return [];
   }

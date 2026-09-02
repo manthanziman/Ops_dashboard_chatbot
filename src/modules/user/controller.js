@@ -27,18 +27,31 @@ const signupUser = (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
-    const email = String(req.body.email ?? "").trim().toLowerCase();
-    const password = String(req.body.password ?? "");
+    const email = String(req.body.email).trim().toLowerCase();
+    const password = String(req.body.password);
+
+    if((!email || !String(email).trim()) || (!password || !String(password).trim())){
+      return res.status(401).json({ success: false, error: "Both email and password required" });
+    }
+
     const user = await User.findOne({ email });
 
-    if (!user || !user.isActive || hashPassword(password) !== user.password) {
-      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    if (!user) {
+      return res.status(401).json({ success: false, error: "No user found with given credentials" });
+    }
+
+    if(!user.isActive){
+      return res.status(401).json({ success: false, error: "Inactive user" });
+    }
+
+    if(hashPassword(password) !== user.password){
+      return res.status(401).json({ success: false, error: "Invalid password" });
     }
 
     return res.status(200).json({ success: true, token: issueToken(user), result: sanitizeUser(user) });
   } catch (error) {
     console.error("User login failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Internal server error." });
   }
 };
 
@@ -46,9 +59,10 @@ const createUser = async (req, res) => {
   try {
     const { name, email, password, role, isActive } = req.body;
 
-    if (!name || !String(name).trim()) {
-      return res.status(400).json({ success: false, error: "Name is required." });
-    }
+    if (!name || !String(name).trim()) return res.status(400).json({ success: false, error: "Name is required." });
+    else if(!email || !String(name).trim()) return res.status(400).json({ success: false, error: "Email is required." });
+    else if(!password || !String(name).trim()) return res.status(400).json({ success: false, error: "Password is required." });
+    else if(!role || !String(name).trim()) return res.status(400).json({ success: false, error: "Role is required." });
 
     const normalizedEmail = String(email ?? "").trim().toLowerCase();
     if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
@@ -81,7 +95,7 @@ const createUser = async (req, res) => {
     });
   } catch (error) {
     console.error("User creation failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Internal server error." });
   }
 };
 
@@ -124,7 +138,7 @@ const readUsers = async (req, res) => {
     });
   } catch (error) {
     console.error("User list fetch failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Failed to fetch users." });
   }
 };
 
@@ -145,7 +159,7 @@ const readUser = async (req, res) => {
     return res.status(200).json({ success: true, result: safeUser });
   } catch (error) {
     console.error("User fetch failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Failed to fetch user." });
   }
 };
 
@@ -207,7 +221,7 @@ const updateUser = async (req, res) => {
     return res.status(200).json({ success: true, result: sanitizeUser(user) });
   } catch (error) {
     console.error("User update failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Failed to update user."});
   }
 };
 
@@ -239,7 +253,7 @@ const deleteUser = async (req, res) => {
     });
   } catch (error) {
     console.error("User deletion failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Failed to delete user." });
   }
 };
 
