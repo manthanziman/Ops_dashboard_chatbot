@@ -16,7 +16,6 @@
     "@google/genai": "^2.17.0",
     "@langchain/textsplitters": "^1.0.1",
     "@llamaindex/liteparse": "^2.12.0",
-    "@opendataloader/pdf": "^2.5.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

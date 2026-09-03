@@ -33,11 +33,6 @@ const uploadDocument = async (req, res) => {
       });
     }
 
-    // 1. Duplicate check: same user, same name, same content hash and
-    //    not soft-deleted. This is what stops the same file from being
-    //    ingested twice under separate document ids — the update
-    //    endpoint is deliberately not involved in this decision, it
-    //    only ever acts on a documentId the client already has.
     const contentHash = hashText(req.file.buffer);
 
     const duplicate = await Document.findOne({
@@ -122,6 +117,8 @@ const uploadDocument = async (req, res) => {
         meta,
         parentCount: savedParents.length,
         childCount: savedChildren.length,
+        parents,
+        children
       },
     });
   } catch (error) {
@@ -129,7 +126,7 @@ const uploadDocument = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Document couldn't be saved, Please try again.",
     });
   }
 };
@@ -322,7 +319,7 @@ const reprocessDocument = async (req, res) => {
   } catch (error) {
     console.error("Document reprocessing failed:", error);
 
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Document reprocessing failed, Please try again." });
   }
 };
 
@@ -338,12 +335,10 @@ const updateDocument = async (req, res) => {
       return reprocessDocument(req, res);
     }
 
-    return Object.prototype.hasOwnProperty.call(req.body, "description")
-      ? updateDescription(req, res)
-      : renameDocument(req, res);
+    return Object.prototype.hasOwnProperty.call(req.body, "description") ? updateDescription(req, res) : renameDocument(req, res);
   } catch (error) {
     console.error("Document update failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Document update failed" });
   }
 };
 
@@ -377,7 +372,7 @@ const readDocument = async (req, res) => {
     });
   } catch (error) {
     console.error("Document fetch failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Document retrieval failed" });
   }
 };
 
@@ -415,7 +410,7 @@ const readDocuments = async (req, res) => {
     });
   } catch (error) {
     console.error("Document list fetch failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Document retrival failed" });
   }
 };
 
@@ -449,7 +444,7 @@ const deleteDocument = async (req, res) => {
     });
   } catch (error) {
     console.error("Document deletion failed:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: "Document deletion failed" });
   }
 };
 

@@ -31,7 +31,7 @@ function buildSystemPrompt(today) {
 const getUserId = (req) =>
   req.user?._id ?? null;
 
-  const extractTextFromResponse = (response) => {
+const extractTextFromResponse = (response) => {
   const text = response?.text;
   if (text) return text;
 
@@ -49,110 +49,119 @@ const getUserId = (req) =>
  * The user does not need to know the document name or ID.
  */
 const listKnowledgeBaseDocuments = async () => {
-  const documents = await Document.find(
-    {deletedAt: null,}
-  ).select("_id name fileName originalName title description").lean();
+  try{
+    const documents = await Document.find({
+      deletedAt: null,
+    })
+    .select("_id name fileName originalName title description")
+    .lean();
 
-  return {
-    found: documents.length > 0,
-    count: documents.length,
+    return {
+      found: documents.length > 0,
+      count: documents.length,
 
-    documents: documents.map((document) => ({
-      documentId: String(document._id),
-      name:document.name || document.title || document.fileName || document.originalName || "Unnamed document",
-      description: document.description || document.summary || "No description is available for this document.",
-    })),
-  };
+      documents: documents.map((document) => ({
+        documentId: String(document._id),
+        name: document.name || document.title || document.fileName || document.originalName || "Unnamed document",
+        description: document.description || document.summary || "No description is available for this document.",
+      })),
+    };
+  }catch(err){
+    return {error : "Failed fetch documents from knowledgebase."}
+  }
+  
 };
 
 /**
  * Semantic child search followed by parent retrieval.
  */
 const searchDocuments = async (queryText, topK) => {
-  const queryEmbedding = await embedText(queryText);
+  try{
+    const queryEmbedding = await embedText(queryText);
 
-  const relevantChildren = await ChildChunk.aggregate([
-    {
-      $vectorSearch: {
-        index:
-          process.env.ATLAS_INDEX_NAME ||
-          "vector_index",
-        path: "embedding",
-        queryVector: queryEmbedding,
-        numCandidates: Math.max(topK * 10, 50),
-        limit: topK,
-      },
-    },
-
-    {
-      $project: {
-        _id: 1,
-        documentId: 1,
-        parentId: 1,
-        text: 1,
-        pageNumber: 1,
-        score: {
-          $meta: "vectorSearchScore",
+    const relevantChildren = await ChildChunk.aggregate([
+      {
+        $vectorSearch: {
+          index: process.env.ATLAS_INDEX_NAME || "vector_index",
+          path: "embedding",
+          queryVector: queryEmbedding,
+          numCandidates: Math.max(topK * 10, 50),
+          limit: topK,
         },
       },
-    },
-  ]);
 
-  if (!relevantChildren.length) {
+      {
+        $project: {
+          _id: 1,
+          documentId: 1,
+          parentId: 1,
+          text: 1,
+          pageNumber: 1,
+          score: {
+            $meta: "vectorSearchScore",
+          },
+        },
+      },
+    ]);
+
+    if (!relevantChildren.length) {
+      return {
+        found: false,
+        resultCount: 0,
+        results: [],
+        message: "No relevant document content was found.",
+      };
+    }
+
+    const parentIds = [...new Set(relevantChildren.map((child) => String(child.parentId))),];
+
+    const relevantParents = await ParentChunk.find({
+      _id: {
+        $in: parentIds,
+      },
+    }).lean();
+
+    const parentMap = new Map(relevantParents.map((parent) => [String(parent._id),parent,]));
+
+    const results = [];
+    const seenParentIds = new Set();
+
+    for (const child of relevantChildren) {
+      const parentId = String(child.parentId);
+
+      if (seenParentIds.has(parentId)) {
+        continue;
+      }
+
+      const parent = parentMap.get(parentId);
+
+      if (!parent) {
+        continue;
+      }
+
+      const childMatches = relevantChildren.filter((item) => String(item.parentId) === parentId);
+
+      results.push({
+        documentId: String(child.documentId),
+        parentId,
+        parentIndex: parent.index,
+        pageNumber: child.pageNumber,
+        score: Math.max(...childMatches.map((item) => item.score ?? 0)),
+        parentText: parent.text,
+        childExcerpts: childMatches.map((item) => item.text?.trim()).filter(Boolean),
+      });
+
+      seenParentIds.add(parentId);
+    }
+
     return {
-      found: false,
-      resultCount: 0,
-      results: [],
-      message: "No relevant document content was found.",
+      found: true,
+      resultCount: results.length,
+      results,
     };
+  }catch(err){
+    return {error : "Document retrieval failed"}
   }
-
-  const parentIds = [...new Set(relevantChildren.map((child) => String(child.parentId))),];
-
-  const relevantParents = await ParentChunk.find({
-    _id: {
-      $in: parentIds,
-    },
-  }).lean();
-
-  const parentMap = new Map(relevantParents.map((parent) => [String(parent._id),parent,]));
-
-  const results = [];
-  const seenParentIds = new Set();
-
-  for (const child of relevantChildren) {
-    const parentId = String(child.parentId);
-
-    if (seenParentIds.has(parentId)) {
-      continue;
-    }
-
-    const parent = parentMap.get(parentId);
-
-    if (!parent) {
-      continue;
-    }
-
-    const childMatches = relevantChildren.filter((item) => String(item.parentId) === parentId);
-
-    results.push({
-      documentId: String(child.documentId),
-      parentId,
-      parentIndex: parent.index,
-      pageNumber: child.pageNumber,
-      score: Math.max(...childMatches.map((item) => item.score ?? 0)),
-      parentText: parent.text,
-      childExcerpts: childMatches.map((item) => item.text?.trim()).filter(Boolean),
-    });
-
-    seenParentIds.add(parentId);
-  }
-
-  return {
-    found: true,
-    resultCount: results.length,
-    results,
-  };
 };
 
 /**
@@ -162,59 +171,65 @@ const searchDocuments = async (queryText, topK) => {
  * document is required.
  */
 const getDocumentContext = async ({documentId,documentName,}) => {
-  let document = null;
+  try{
+    let document = null;
 
-  if (documentId) {
-    document = await Document.findOne({
-      _id: documentId,
-      deletedAt: null,
-    }).lean();
-  } else if (documentName) {
-    const name = String(documentName).trim();
+    if (documentId) {
+      document = await Document.findOne({
+        _id: documentId,
+        deletedAt: null,
+      }).lean();
+    } else if (documentName) {
+      const name = String(documentName).trim();
 
-    document = await Document.findOne({
-      deletedAt: null,
-      $or: [
-        { name },
-        { title: name },
-        { fileName: name },
-        { originalName: name },
-      ],
-    }).lean();
-  }
+      document = await Document.findOne({
+        deletedAt: null,
+        $or: [
+          { name },
+          { title: name },
+          { fileName: name },
+          { originalName: name },
+        ],
+      }).lean();
+    }
 
-  if (!document) {
+    if (!document) {
+      return {
+        found: false,
+        message:
+          "The requested document could not be found.",
+      };
+    }
+
+    const parents = await ParentChunk.find({
+        documentId: document._id,
+      })
+      .sort({ index: 1 })
+      .lean();
+
+    if (!parents.length) {
+      return {
+        found: false,
+        message: "The document exists, but no parent content was found.",
+      };
+    }
+
     return {
-      found: false,
-      message:
-        "The requested document could not be found.",
+      found: true,
+      document: {
+        documentId: String(document._id),
+        name: document.name || document.title || document.fileName || document.originalName || "Unnamed document",
+        description: document.description || document.summary || null,
+      },
+      parentCount: parents.length,
+      sections: parents.map((parent) => ({
+        index: parent.index,
+        text: parent.text,
+      })),
     };
+  }catch(err){
+    return {error : "Document retrieval failed"}
   }
-
-  const parents = await ParentChunk.find({
-    documentId: document._id,
-  }).sort({ index: 1 }).lean();
-
-  if (!parents.length) {
-    return {
-      found: false,
-      message: "The document exists, but no parent content was found.",
-    };
-  }
-
-  return {
-    found: true,
-    document: {
-      documentId: String(document._id),
-      name:document.name || document.title || document.fileName || document.originalName || "Unnamed document",
-      description: document.description || document.summary || null,
-    },
-    parentCount: parents.length,
-    sections: parents.map((parent) => ({
-      index: parent.index,
-      text: parent.text,
-    })),
-  };
 };
 
 /**
@@ -285,7 +300,7 @@ const retrievalTools = [
 /**
  * Executes one retrieval tool.
  */
-const executeTool = async (name,args = {}) => {
+const executeTool = async (name, args = {}) => {
   switch (name) {
     case "list_knowledge_base_documents":
       return listKnowledgeBaseDocuments();
@@ -331,109 +346,52 @@ const executeTool = async (name,args = {}) => {
 };
 
 /**
- * Main agentic RAG loop.
+ * Streams response text that is already present on a model response.
+ * This avoids a second LLM call when the model already returned the final answer.
  */
-const runAgenticRAG = async ({query, historyMessages, systemInstruction,}) => {
-  const contents = [
-    ...historyMessages,
-    {
-      role: "user",
-      parts: [
-        {text: query,},
-      ],
-    },
-  ];
+const streamResponseText = ({response,onEvent,}) => {
+  const candidate = response?.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
 
-  const retrievalStats = {
-    retrievalUsed: false,
-    knowledgeBaseLookups: 0,
-    retrievalRounds: 0,
-    defaultRetrievals: 0,
-    expandedRetrievals: 0,
-    fullDocumentRetrievals: 0,
-    retrievedParents: 0,
-    retrievedChildren: 0,
-  };
+  if (!parts.length) {
+    return "";
+  }
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response =
-      await getGenAI().models.generateContent({
-        model: CHAT_MODEL,
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.2,
-          tools: retrievalTools,
-        },
-      });
+  let reply = "";
 
-    const functionCalls = response.functionCalls || [];
+  for (const part of parts) {
+    const text = typeof part?.text === "string" ? part.text : "";
 
-    if (!functionCalls.length) {
-      return {
-        reply:extractTextFromResponse(response),
-        retrievalStats,
-      };
+    if (!text) {
+      continue;
     }
 
-    contents.push(response.candidates[0].content);
+    reply += text;
 
-    const functionResponseParts = [];
-
-    for (const functionCall of functionCalls) {
-      let result;
-
-      try {
-        result = await executeTool(functionCall.name, functionCall.args || {});
-
-        if (functionCall.name === "list_knowledge_base_documents") {
-          retrievalStats.knowledgeBaseLookups++;
-        }
-
-        if (functionCall.name === "search_documents") {
-          retrievalStats.retrievalUsed = true;
-          retrievalStats.retrievalRounds++;
-          if (result.retrievalMode === "expanded") {
-            retrievalStats.expandedRetrievals++;
-          } else {
-            retrievalStats.defaultRetrievals++;
-          }
-
-          retrievalStats.retrievedParents += result.results?.length || 0;
-          retrievalStats.retrievedChildren += result.results?.reduce((total, item) => total + (item.childExcerpts?.length || 0),0) || 0;
-        }
-
-        if ( functionCall.name === "get_document_context") {
-          retrievalStats.retrievalUsed = true;
-          retrievalStats.fullDocumentRetrievals++;
-          retrievalStats.retrievedParents += result.sections?.length || 0;
-        }
-      } catch (error) {
-        console.error(`Tool execution failed: ${functionCall.name}`, error);
-
-        result = {
-          found: false,
-          error: error.message,
-        };
-      }
-
-      functionResponseParts.push({
-        functionResponse: {
-          name: functionCall.name,
-          id: functionCall.id,
-          response: {result,},
-        },
-      });
-    }
-
-    contents.push({
-      role: "user",
-      parts: functionResponseParts,
+    onEvent?.({
+      type: "text",
+      text,
     });
   }
 
-  const finalResponse =
-    await getGenAI().models.generateContent({
+  return reply;
+};
+
+/**
+ * Generates the final answer using Gemini streaming.
+ *
+ * onEvent receives:
+ *
+ * { type: "status", status: "generating" }
+ * { type: "text", text: "..." }
+ */
+const generateFinalAnswerStream = async ({contents,systemInstruction,onEvent,}) => {
+  onEvent?.({
+    type: "status",
+    status: "generating",
+  });
+
+  const stream = await getGenAI().models.generateContentStream({
       model: CHAT_MODEL,
       contents,
       config: {
@@ -442,10 +400,185 @@ const runAgenticRAG = async ({query, historyMessages, systemInstruction,}) => {
       },
     });
 
-  return {
-    reply: extractTextFromResponse(finalResponse),
-    retrievalStats,
-  };
+  let reply = "";
+
+  for await (const chunk of stream) {
+    const text = chunk?.text || "";
+
+    if (!text) {
+      continue;
+    }
+
+    reply += text;
+
+    onEvent?.({
+      type: "text",
+      text,
+    });
+  }
+
+  if (!reply.trim()) {
+    throw new Error(
+      "Chat model returned an empty response."
+    );
+  }
+
+  return reply;
+};
+
+/**
+ * Main agentic RAG loop.
+ *
+ * Tool-calling rounds remain non-streaming.
+ * Only the final natural-language answer is streamed.
+ */
+const runAgenticRAG = async ({query,historyMessages,systemInstruction,onEvent,}) => {
+  try{
+    const contents = [
+      ...historyMessages,
+      {
+        role: "user",
+        parts: [
+          {text: query,},
+        ],
+      },
+    ];
+
+    const retrievalStats = {
+      retrievalUsed: false,
+      knowledgeBaseLookups: 0,
+      retrievalRounds: 0,
+      defaultRetrievals: 0,
+      expandedRetrievals: 0,
+      fullDocumentRetrievals: 0,
+      retrievedParents: 0,
+      retrievedChildren: 0,
+    };
+
+    onEvent?.({
+      type: "status",
+      status: "analyzing",
+    });
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const response = await getGenAI().models.generateContent({
+          model: CHAT_MODEL,
+          contents,
+          config: {
+            systemInstruction,
+            temperature: 0.2,
+            tools: retrievalTools,
+          },
+        });
+
+      const functionCalls = response.functionCalls || [];
+
+      /**
+       * No more tools are required.
+       *
+       * The model already returned the final answer in this response,
+       * so stream that text instead of making an extra generation call.
+       */
+      if (!functionCalls.length) {
+        onEvent?.({
+          type: "status",
+          status: "generating",
+        });
+
+        const reply = streamResponseText({response,onEvent,}) || await generateFinalAnswerStream({contents,systemInstruction,onEvent,});
+
+        if (!reply.trim()) {
+          throw new Error(
+            "Chat model returned an empty response."
+          );
+        }
+
+        return {
+          reply,
+          retrievalStats,
+        };
+      }
+
+      contents.push(response.candidates[0].content);
+
+      const functionResponseParts = [];
+
+      for (const functionCall of functionCalls) {
+        let result;
+
+        try {
+          if (functionCall.name === "list_knowledge_base_documents" || functionCall.name === "search_documents" || functionCall.name === "get_document_context") {
+            onEvent?.({
+              type: "status",
+              status: "retrieving",
+            });
+          }
+
+          result = await executeTool(functionCall.name, functionCall.args || {});
+
+          if (functionCall.name === "list_knowledge_base_documents") {
+            retrievalStats.knowledgeBaseLookups++;
+          }
+
+          if (functionCall.name === "search_documents") {
+            retrievalStats.retrievalUsed = true;
+            retrievalStats.retrievalRounds++;
+
+            if (result.retrievalMode === "expanded") {
+              retrievalStats.expandedRetrievals++;
+            } else {
+              retrievalStats.defaultRetrievals++;
+            }
+
+            retrievalStats.retrievedParents += result.results?.length || 0;
+
+            retrievalStats.retrievedChildren += result.results?.reduce((total, item) => total + (item.childExcerpts?.length || 0), 0) || 0;
+          }
+
+          if (functionCall.name ==="get_document_context") {
+            retrievalStats.retrievalUsed = true;
+            retrievalStats.fullDocumentRetrievals++;
+
+            retrievalStats.retrievedParents +=
+              result.sections?.length || 0;
+          }
+        } catch (error) {
+          console.error(`Tool execution failed: ${functionCall.name}`,error);
+
+          result = {
+            found: false,
+            error: error.message,
+          };
+        }
+
+        functionResponseParts.push({
+          functionResponse: {
+            name: functionCall.name,
+            id: functionCall.id,
+            response: {result},
+          },
+        });
+      }
+
+      contents.push({
+        role: "user",
+        parts: functionResponseParts,
+      });
+    }
+
+    /**
+     * Safety fallback if MAX_TOOL_ROUNDS is reached.
+     * Still stream the final response.
+     */
+    const reply = await generateFinalAnswerStream({contents,systemInstruction,onEvent,});
+
+    return {
+      reply,
+      retrievalStats,
+    };
+  }catch(err){
+    throw err;
+  }
 };
 
 const createNewSession = async (userId,initialTitle = "New chat") => {
@@ -460,7 +593,7 @@ const createNewSession = async (userId,initialTitle = "New chat") => {
   });
 };
 
-const createChatSession = async (req,res) => {
+const createChatSession = async (req, res) => {
   try {
     const userId = getUserId(req);
 
@@ -471,8 +604,7 @@ const createChatSession = async (req,res) => {
       });
     }
 
-    const user =
-      await User.findById(userId);
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -488,16 +620,16 @@ const createChatSession = async (req,res) => {
       result: session,
     });
   } catch (error) {
-    console.error( "Chat session creation failed:", error);
+    console.error("Chat session creation failed:",error);
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Couldn't create chat session, please try again.",
     });
   }
 };
 
-const listChatSessions = async (req,res) => {
+const listChatSessions = async (req, res) => {
   try {
     const userId = getUserId(req);
 
@@ -508,7 +640,12 @@ const listChatSessions = async (req,res) => {
       });
     }
 
-    const sessions = await ChatSession.find({userId,}).sort({updatedAt: -1,});
+    const sessions =
+      await ChatSession.find({
+        userId,
+      }).sort({
+        updatedAt: -1,
+      });
 
     return res.status(200).json({
       success: true,
@@ -519,12 +656,12 @@ const listChatSessions = async (req,res) => {
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Failed to fetch chats.",
     });
   }
 };
 
-const getChatSession = async (req,res) => {
+const getChatSession = async (req, res) => {
   try {
     const { sessionId } = req.params;
 
@@ -537,8 +674,10 @@ const getChatSession = async (req,res) => {
       });
     }
 
-    const session =
-      await ChatSession.findOne({ sessionId, userId,});
+    const session = await ChatSession.findOne({
+        sessionId,
+        userId,
+      });
 
     if (!session) {
       return res.status(404).json({
@@ -552,23 +691,22 @@ const getChatSession = async (req,res) => {
       result: session,
     });
   } catch (error) {
-    console.error("Chat session fetch failed:", error);
+    console.error("Chat session fetch failed:",error);
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: `Failed to fetch chat session ${sessionId}`,
     });
   }
 };
 
-const sendMessage = async (req,res) => {
+const sendMessage = async (req, res) => {
+  let streamStarted = false;
+
   try {
     const userId = getUserId(req);
 
-    const {
-      sessionId,
-      message,
-    } = req.body;
+    const {sessionId,message,} = req.body;
 
     if (!userId) {
       return res.status(401).json({
@@ -605,21 +743,55 @@ const sendMessage = async (req,res) => {
       });
     }
 
-    const historyMessages = session.messages
-        .slice(-10)
+    const historyMessages = session.messages.slice(-10)
         .map((item) => ({
           role: item.role,
-          parts: [
-            {text: item.content,},
-          ],
+          parts: [{text: item.content,}],
         }));
+
+    /**
+     * Start SSE response.
+     */
+    res.setHeader("Content-Type","text/event-stream");
+
+    res.setHeader("Cache-Control","no-cache");
+
+    res.setHeader("Connection","keep-alive");
+
+    res.flushHeaders?.();
+
+    streamStarted = true;
+
+    /**
+     * Small helper for sending events.
+     */
+    const sendEvent = (data) => {
+      if (res.writableEnded) {
+        return;
+      }
+
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    /**
+     * Let frontend know we're starting.
+     */
+    sendEvent({
+      type: "status",
+      status: "analyzing",
+    });
 
     const agentResult = await runAgenticRAG({
         query: text,
         historyMessages,
-        systemInstruction: buildSystemPrompt(new Date().toString()),
+        systemInstruction:buildSystemPrompt(new Date().toString()),
+        onEvent: (event) => {sendEvent(event);},
       });
 
+    /**
+     * Save the complete conversation only
+     * after generation has finished.
+     */
     session.messages.push({
       role: "user",
       content: text,
@@ -638,24 +810,35 @@ const sendMessage = async (req,res) => {
 
     await session.save();
 
-    return res.status(200).json({
-      success: true,
-      result: {
-        sessionId: session.sessionId,
-        userId: session.userId,
-        message: text,
-        reply:agentResult.reply,
-        retrieval: agentResult.retrievalStats,
-        session,
-      },
+    /**
+     * Tell frontend generation is complete.
+     */
+    sendEvent({
+      type: "done",
+      sessionId: session.sessionId,
+      userMessage: text,
+      retrieval: agentResult.retrievalStats,
+      session: { title: session.title,},
     });
+
+    res.end();
   } catch (error) {
     console.error("Chat message processing failed:",error);
 
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-    });
+    if (streamStarted) {
+      try {
+        res.write(`data: ${JSON.stringify({type: "error",error: "Failed to process message",})}\n\n`);
+      } catch {
+        // Ignore write errors while closing stream.
+      }
+
+      res.end();
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: "Facing some issue while processing, please kindly try again after some time.",
+      });
+    }
   }
 };
 
