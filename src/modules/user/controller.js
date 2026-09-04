@@ -210,7 +210,10 @@ const updateUser = async (req, res) => {
     }
 
     if (isActive !== undefined) {
-      update.isActive = Boolean(isActive);
+      if (typeof isActive !== "boolean") {
+        return res.status(400).json({ success: false, error: "isActive must be a boolean." });
+      }
+      update.isActive = isActive;
     }
 
     const user = await User.findByIdAndUpdate(id, update, { new: true, runValidators: true });
@@ -233,11 +236,7 @@ const deleteUser = async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid user id." });
     }
 
-    const user = await User.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true }
-    );
+    const user = await User.findByIdAndDelete(id);
 
     if (!user) {
       return res.status(404).json({ success: false, error: "User not found." });
@@ -247,8 +246,7 @@ const deleteUser = async (req, res) => {
       success: true,
       result: {
         _id: user._id,
-        isActive: user.isActive,
-        message: "User deactivated successfully.",
+        message: "User deleted successfully.",
       },
     });
   } catch (error) {

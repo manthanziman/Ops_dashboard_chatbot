@@ -12,6 +12,11 @@ import crypto from "node:crypto";
 const CHILD_CHUNK_SIZE = 800;
 const CHILD_CHUNK_OVERLAP = 120;
 
+// A section is only broken down into a smaller heading level if it's bigger
+// than this. Sections that already fit are left whole, whatever depth
+// they're found at.
+const PARENT_MAX_CHARS = 4000;
+
 // -----------------------------------------------------------------------------
 // Content hashing
 //
@@ -33,11 +38,11 @@ const parsePdf = async (buffer) => {
   }
 
   const parser = new LiteParse({
-    outputFormat: "json",
+    outputFormat: "markdown",
     imageMode: "placeholder",
     extractBlocks: true,
     extractLinks: true,
-    keepHeadersFooters: true, 
+    // keepHeadersFooters: true,
     extractStructureTree: true,
     quiet: true,
   });
@@ -46,205 +51,322 @@ const parsePdf = async (buffer) => {
 };
 
 // -----------------------------------------------------------------------------
+// Marked-content text lookup
+//
+// structureTree nodes don't carry their own text — they carry
+// `markedContentIds`, which are positions into THAT PAGE's `textItems`
+// array (not a global id, and not a field on the textItem itself). So this
+// map is built per page, keyed by array index.
+// -----------------------------------------------------------------------------
+
+const buildMarkedContentMap = (page) => {
+  const textItems = Array.isArray(page?.textItems) ? page.textItems : [];
+  const map = new Map();
+
+  textItems.forEach((item, idx) => {
+    const text = item?.text ?? "";
+    if (text) {
+      map.set(idx, String(text));
+    }
+  });
+
+  return map;
+};
+
+const getNodeOwnText = (node, markedContentMap) => {
+  const parts = [];
+
+  const actualText = node?.actualText ?? node?.actual_text;
+  if (actualText) {
+    parts.push(String(actualText));
+  }
+
+  const ids = Array.isArray(node?.markedContentIds)
+    ? node.markedContentIds
+    : Array.isArray(node?.marked_content_ids)
+      ? node.marked_content_ids
+      : [];
+
+  for (const id of ids) {
+    const text = markedContentMap.get(id);
+    if (text) {
+      parts.push(text);
+    }
+  }
+
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+};
+
+// Deep text: a node's own text plus all descendants', in order. Used for
+// table cells / list items, which can nest a <P> a level or two down.
+const getDeepText = (node, markedContentMap) => {
+  const parts = [];
+
+  const collect = (n) => {
+    const own = getNodeOwnText(n, markedContentMap);
+    if (own) {
+      parts.push(own);
+    }
+
+    const children = Array.isArray(n?.children) ? n.children : [];
+    for (const child of children) {
+      collect(child);
+    }
+  };
+
+  collect(node);
+
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+};
+
+// -----------------------------------------------------------------------------
+// Atomic block renderers (table / list)
+//
+// A table or list is always exactly one block — both when parents are being
+// built and later when it becomes a child chunk. It is never split.
+// -----------------------------------------------------------------------------
+
+const tableToRows = (tableNode, markedContentMap) => {
+  const trNodes = (Array.isArray(tableNode?.children) ? tableNode.children : []).filter(
+    (n) => String(n?.type ?? "").toUpperCase() === "TR"
+  );
+
+  return trNodes.map((tr) => {
+    const cells = Array.isArray(tr?.children) ? tr.children : [];
+    return cells.map((cell) => getDeepText(cell, markedContentMap));
+  });
+};
+
+const rowsToMarkdown = (rows) => {
+  if (!rows.length) {
+    return "";
+  }
+
+  const lines = [`| ${rows[0].join(" | ")} |`, `| ${rows[0].map(() => "---").join(" | ")} |`];
+
+  for (let i = 1; i < rows.length; i++) {
+    lines.push(`| ${rows[i].join(" | ")} |`);
+  }
+
+  return lines.join("\n");
+};
+
+const listToText = (listNode, markedContentMap) => {
+  const liNodes = (Array.isArray(listNode?.children) ? listNode.children : []).filter(
+    (n) => String(n?.type ?? "").toUpperCase() === "LI"
+  );
+
+  return liNodes.map((li) => `- ${getDeepText(li, markedContentMap)}`).join("\n");
+};
+
+// -----------------------------------------------------------------------------
+// Flatten: walk every page's structureTree into one linear, page-ordered
+// list of blocks. Everything downstream (heading detection, splitting,
+// table-continuation merging) works off this single list — no re-walking
+// per-page trees later.
+// -----------------------------------------------------------------------------
+
+const flattenPages = (pages) => {
+  const blocks = [];
+
+  for (const page of pages) {
+    const pageNumber = page?.pageNum ?? page?.pageNumber ?? page?.page ?? 1;
+    const roots = Array.isArray(page?.structureTree?.roots) ? page.structureTree.roots : [];
+    const markedContentMap = buildMarkedContentMap(page);
+
+    const walk = (node) => {
+      if (!node) {
+        return;
+      }
+
+      const type = String(node?.type ?? "").toUpperCase();
+
+      if (type === "TABLE") {
+        const rows = tableToRows(node, markedContentMap);
+        const text = rowsToMarkdown(rows);
+        if (text) {
+          blocks.push({ type: "table", text, page: pageNumber, headerRow: rows[0] ?? [] });
+        }
+        return; // atomic — don't descend into TR/TD
+      }
+
+      if (type === "L") {
+        const text = listToText(node, markedContentMap);
+        if (text) {
+          blocks.push({ type: "list", text, page: pageNumber });
+        }
+        return; // atomic — don't descend into LI
+      }
+
+      const headingMatch = /^H([1-6])$/.exec(type);
+      if (headingMatch) {
+        const text = getNodeOwnText(node, markedContentMap);
+        if (text) {
+          blocks.push({ type: "heading", level: Number(headingMatch[1]), text, page: pageNumber });
+        }
+        return;
+      }
+
+      const text = getNodeOwnText(node, markedContentMap);
+      if (text) {
+        blocks.push({ type: type.toLowerCase() || "text", text, page: pageNumber });
+      }
+
+      const children = Array.isArray(node?.children) ? node.children : [];
+      for (const child of children) {
+        walk(child);
+      }
+    };
+
+    for (const root of roots) {
+      walk(root);
+    }
+  }
+
+  return mergeContinuedTables(blocks);
+};
+
+// A table that ends one page and picks straight back up as a table on the
+// very next page — nothing in between — is one table, not two. If the
+// continuation repeats the header row, the duplicate is dropped.
+const mergeContinuedTables = (blocks) => {
+  const merged = [];
+
+  const sameRow = (a = [], b = []) =>
+    a.length === b.length && a.every((cell, i) => cell.trim().toLowerCase() === (b[i] ?? "").trim().toLowerCase());
+
+  for (const block of blocks) {
+    const prev = merged[merged.length - 1];
+
+    if (block.type === "table" && prev?.type === "table" && block.page === prev.page + 1) {
+      const lines = block.text.split("\n");
+      const bodyLines = sameRow(block.headerRow, prev.headerRow) ? lines.slice(2) : lines;
+
+      prev.text = `${prev.text}\n${bodyLines.join("\n")}`;
+      prev.page = block.page; // extend so a further continuation still chains
+      continue;
+    }
+
+    merged.push({ ...block });
+  }
+
+  return merged;
+};
+
+// -----------------------------------------------------------------------------
+// Section splitting
+//
+// No heading level is assumed. We look at whatever levels actually occur in
+// this document and split on the topmost one. A resulting section is only
+// broken down further — into the next level in — if it's still too big;
+// sections that already fit are left alone regardless of depth.
+// -----------------------------------------------------------------------------
+
+const detectHeadingLevels = (blocks) => {
+  const levels = new Set();
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      levels.add(block.level);
+    }
+  }
+  return [...levels].sort((a, b) => a - b);
+};
+
+const splitOnLevel = (blocks, level) => {
+  const sections = [];
+  let current = null;
+
+  const start = () => {
+    current = { blocks: [] };
+    sections.push(current);
+  };
+
+  for (const block of blocks) {
+    if ((block.type === "heading" && block.level === level) || !current) {
+      start();
+    }
+    current.blocks.push(block);
+  }
+
+  return sections;
+};
+
+const blockSize = (blocks) => blocks.reduce((sum, b) => sum + b.text.length, 0);
+
+const splitBySize = (blocks, headingLevels) => {
+  if (!headingLevels.length) {
+    return [blocks];
+  }
+
+  const [level, ...deeper] = headingLevels;
+  const sections = splitOnLevel(blocks, level);
+  const result = [];
+
+  for (const section of sections) {
+    if (blockSize(section.blocks) <= PARENT_MAX_CHARS || !deeper.length) {
+      result.push(section.blocks);
+    } else {
+      result.push(...splitBySize(section.blocks, deeper));
+    }
+  }
+
+  return result;
+};
+
+// -----------------------------------------------------------------------------
+// Rendering blocks into parent text
+// -----------------------------------------------------------------------------
+
+const renderBlock = (block) => {
+  if (block.type === "heading") {
+    return `${"#".repeat(block.level)} ${block.text}`;
+  }
+  return block.text;
+};
+
+const buildParent = (blocks, index) => {
+  const text = blocks.map(renderBlock).filter(Boolean).join("\n\n").trim();
+
+  if (!text) {
+    return null;
+  }
+
+  const headingBlock = blocks.find((b) => b.type === "heading");
+  const pages = blocks.map((b) => b.page);
+
+  return {
+    _id: uuidv4(),
+    index,
+    heading: headingBlock?.text ?? null,
+    headingLevel: headingBlock?.level ?? null,
+    text,
+    contentHash: hashText(text),
+    startPage: Math.min(...pages),
+    endPage: Math.max(...pages),
+    blocks, // kept for block-aware child chunking; not part of the public parent shape
+  };
+};
+
+// -----------------------------------------------------------------------------
 // Parent creation
 // -----------------------------------------------------------------------------
 
 const createLogicalParents = (parsed) => {
-  // console.log(parsed)
   const pages = Array.isArray(parsed?.pages) ? parsed.pages : [];
 
-  const structureTree = parsed?.structureTree ?? parsed?.structure_tree ?? null;
-  console.log(structureTree)
   if (!pages.length) {
     return [];
   }
 
-  const markedContentMap = new Map();
+  const blocks = flattenPages(pages);
+  const headingLevels = detectHeadingLevels(blocks);
 
-  for (const page of pages) {
-    const textItems = Array.isArray(page?.textItems) ? page.textItems : [];
-    console.log(page.structureTree)
-    for (const item of textItems) {
-      const id = item?.markedContentId ?? item?.marked_content_id;
-
-      if (id === undefined || id === null) {
-        continue;
-      }
-
-      const text = item?.text ?? item?.actualText ?? item?.actual_text ?? "";
-
-      if (!text) {
-        continue;
-      }
-
-      const pageNumber = page?.pageNum ?? page?.pageNumber ?? page?.page ?? 1;
-
-      const existing = markedContentMap.get(id);
-
-      if (existing) {
-        existing.text += ` ${text}`;
-      } else {
-        markedContentMap.set(id, {
-          text: String(text),
-          pageNumber,
-        });
-      }
-    }
-  }
-
-  const getNodeText = (node) => {
-    if (!node) {
-      return "";
-    }
-
-    const parts = [];
-
-    const actualText = node?.actualText ?? node?.actual_text;
-
-    if (actualText) {
-      parts.push(String(actualText));
-    }
-
-    const ids = Array.isArray(node?.markedContentIds)
-      ? node.markedContentIds
-      : Array.isArray(node?.marked_content_ids)
-        ? node.marked_content_ids
-        : [];
-
-    for (const id of ids) {
-      const item = markedContentMap.get(id);
-
-      if (item?.text) {
-        parts.push(item.text);
-      }
-    }
-
-    return parts.join(" ").replace(/\s+/g, " ").trim();
-  };
-
-  const findNodePage = (node, fallback = 1) => {
-    const ids = Array.isArray(node?.markedContentIds)
-      ? node.markedContentIds
-      : Array.isArray(node?.marked_content_ids)
-        ? node.marked_content_ids
-        : [];
-
-    for (const id of ids) {
-      const item = markedContentMap.get(id);
-
-      if (item?.pageNumber) {
-        return item.pageNumber;
-      }
-    }
-
-    return fallback;
-  };
-
-  const roots = Array.isArray(structureTree?.roots) ? structureTree.roots : [];
-
-  if (!roots.length) {
+  if (!headingLevels.length) {
     return createFallbackParents(pages);
   }
 
-  const parents = [];
-
-  let currentParent = null;
-  let sectionPath = [];
-
-  const flushParent = () => {
-    if (!currentParent) {
-      return;
-    }
-
-    const text = currentParent.blocks
-      .map((block) => block.text)
-      .filter(Boolean)
-      .join("\n\n")
-      .trim();
-
-    if (text) {
-      parents.push({
-        _id: uuidv4(),
-        index: parents.length,
-        heading: currentParent.heading,
-        headingLevel: currentParent.headingLevel,
-        sectionPath: [...currentParent.sectionPath],
-        text,
-        contentHash: hashText(text),
-        startPage: currentParent.startPage,
-        endPage: currentParent.endPage,
-      });
-    }
-
-    currentParent = null;
-  };
-
-  const walk = (node, currentPage = 1) => {
-    if (!node) {
-      return;
-    }
-
-    const type = String(node?.type ?? "").toUpperCase();
-    const headingMatch = /^H([1-6])$/.exec(type);
-
-    if (headingMatch) {
-      const level = Number(headingMatch[1]);
-
-      const heading = String(node?.actualText ?? node?.actual_text ?? getNodeText(node))
-        .replace(/\s+/g, " ")
-        .trim();
-
-      if (level === 1 || !currentParent) {
-        flushParent();
-
-        sectionPath = [heading];
-
-        currentParent = {
-          heading,
-          headingLevel: level,
-          sectionPath: [...sectionPath],
-          blocks: [],
-          startPage: findNodePage(node, currentPage),
-          endPage: findNodePage(node, currentPage),
-        };
-      } else {
-        sectionPath = sectionPath.slice(0, level - 1);
-        sectionPath.push(heading);
-
-        currentParent.sectionPath = [...sectionPath];
-
-        currentParent.blocks.push({
-          type: "heading",
-          text: `${"#".repeat(level)} ${heading}`,
-        });
-      }
-
-      return;
-    }
-
-    const text = getNodeText(node);
-
-    if (text && currentParent) {
-      currentParent.blocks.push({
-        type: type.toLowerCase(),
-        text,
-      });
-
-      currentParent.endPage = Math.max(currentParent.endPage, findNodePage(node, currentPage));
-    }
-
-    const children = Array.isArray(node?.children) ? node.children : [];
-
-    for (const child of children) {
-      walk(child, currentParent?.endPage ?? currentPage);
-    }
-  };
-
-  for (const root of roots) {
-    walk(root);
-  }
-
-  flushParent();
+  const sections = splitBySize(blocks, headingLevels);
+  const parents = sections.map((sectionBlocks, index) => buildParent(sectionBlocks, index)).filter(Boolean);
 
   return parents.length ? parents : createFallbackParents(pages);
 };
@@ -265,11 +387,11 @@ const createFallbackParents = (pages) => {
         index,
         heading: null,
         headingLevel: null,
-        sectionPath: [],
         text,
         contentHash: hashText(text),
         startPage: pageNumber,
         endPage: pageNumber,
+        blocks: [{ type: "text", text, page: pageNumber }],
       };
     })
     .filter(Boolean);
@@ -286,37 +408,85 @@ const childSplitter = new RecursiveCharacterTextSplitter({
   keepSeparator: true,
 });
 
+// Group a parent's blocks into runs: atomic blocks (table/list) stand on
+// their own; everything else (headings, paragraphs) is grouped into
+// contiguous prose runs so the recursive splitter gets real paragraphs to
+// work with instead of an isolated heading fragment.
+const groupBlocksForChildren = (blocks) => {
+  const groups = [];
+  let prose = [];
+
+  const flushProse = () => {
+    if (prose.length) {
+      groups.push({
+        type: "prose",
+        text: prose.map(renderBlock).filter(Boolean).join("\n\n"),
+        page: prose[0].page,
+      });
+      prose = [];
+    }
+  };
+
+  for (const block of blocks) {
+    if (block.type === "table" || block.type === "list") {
+      flushProse();
+      groups.push({ type: block.type, text: block.text, page: block.page });
+    } else {
+      prose.push(block);
+    }
+  }
+
+  flushProse();
+
+  return groups;
+};
+
 // -----------------------------------------------------------------------------
 // Child creation
+//
+// Tables and lists are never split — each becomes exactly one child chunk.
+// Everything else goes through the normal recursive text splitter.
 // -----------------------------------------------------------------------------
 
 const createChildren = async (parents) => {
   const children = [];
 
   for (const parent of parents) {
-    const chunks = await childSplitter.splitText(parent.text);
+    const blocks = parent.blocks ?? [{ type: "prose", text: parent.text, page: parent.startPage }];
+    const groups = groupBlocksForChildren(blocks);
 
-    chunks.forEach((text, index) => {
-      const cleanText = text.trim();
+    let index = 0;
 
-      if (!cleanText) {
-        return;
+    for (const group of groups) {
+      if (group.type === "table" || group.type === "list") {
+        const cleanText = group.text.trim();
+        if (cleanText) {
+          children.push({
+            _id: uuidv4(),
+            parentId: parent._id,
+            index: index++,
+            text: cleanText,
+            pageNumber: group.page,
+          });
+        }
+        continue;
       }
 
-      children.push({
-        _id: uuidv4(),
-        parentId: parent._id,
-        index,
-        text: cleanText,
+      const pieces = await childSplitter.splitText(group.text);
 
-        /*
-         * At this stage the child inherits the parent's starting page.
-         * We can make this exact later without changing the
-         * parent/child architecture.
-         */
-        pageNumber: parent.startPage,
-      });
-    });
+      for (const piece of pieces) {
+        const cleanText = piece.trim();
+        if (cleanText) {
+          children.push({
+            _id: uuidv4(),
+            parentId: parent._id,
+            index: index++,
+            text: cleanText,
+            pageNumber: group.page,
+          });
+        }
+      }
+    }
   }
 
   return children;
@@ -337,23 +507,22 @@ const chunkDocument = async ({ buffer, documentId = null } = {}) => {
 
   // 1. Parse PDF
   const parsed = await parsePdf(buffer);
-
-  const markdown = String(parsed?.text ?? "").trim();
   const pages = Array.isArray(parsed?.pages) ? parsed.pages : [];
 
-  if (!markdown) {
-    throw new Error("LiteParse returned no extracted text.");
+  if (!pages.length) {
+    throw new Error("LiteParse returned no pages.");
   }
 
-  // 2. Create logical parents (LiteParse's structure tree determines
-  //    parent boundaries — no explicit size restriction here)
+  // 2. Create logical parents (dynamic heading-level detection, atomic
+  //    tables/lists, size-guarded recursive refinement into deeper headings)
   const parents = createLogicalParents(parsed);
 
   if (!parents.length) {
     throw new Error("No parent chunks were created.");
   }
 
-  // 3. Create child chunks
+  // 3. Create child chunks (block-aware: tables/lists stay whole, prose is
+  //    split via RecursiveCharacterTextSplitter)
   const children = await createChildren(parents);
 
   if (!children.length) {
@@ -376,6 +545,8 @@ const chunkDocument = async ({ buffer, documentId = null } = {}) => {
       _id: parent._id,
       documentId,
       index: parent.index,
+      heading: parent.heading,
+      headingLevel: parent.headingLevel,
       text: parent.text,
       contentHash: parent.contentHash,
       startPage: parent.startPage,
@@ -406,4 +577,5 @@ export {
   hashText,
   CHILD_CHUNK_SIZE,
   CHILD_CHUNK_OVERLAP,
+  PARENT_MAX_CHARS,
 };
