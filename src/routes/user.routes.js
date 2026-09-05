@@ -12,7 +12,7 @@ import { authenticate, requireRole } from "../middleware/auth.js";
 const router = express.Router();
 
 router.post("/users", signupUser);
-router.use(authenticate, requireRole("admin"));
+router.use("/users", authenticate, requireRole("admin"));
 router.get("/users", readUsers);
 router.get("/users/:id", readUser);
 router.put("/users/:id", updateUser);

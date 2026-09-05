@@ -67,7 +67,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
 });
 
-router.use(authenticate, requireRole("admin"));
+router.use("/documents", authenticate, requireRole("admin"));
 
 router.post("/documents/chunk",upload.single("file"),uploadDocument);
 router.get("/documents", readDocuments);
