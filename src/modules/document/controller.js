@@ -3,7 +3,7 @@
 import mongoose from "mongoose";
 
 import chunkDocument, { createChildren, hashText } from "../../services/chunking.js";
-import { embedChildren } from "../../services/embedding.js";
+import { embedChildren } from "../../services/embedding.service.js";
 
 import Document from "../../db/schema/document.js";
 import ParentChunk from "../../db/schema/parentChunk.js";

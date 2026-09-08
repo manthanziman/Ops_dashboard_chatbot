@@ -8,8 +8,9 @@ import User from "../../db/schema/user.js";
 import Document from "../../db/schema/document.js";
 import ParentChunk from "../../db/schema/parentChunk.js";
 import ChildChunk from "../../db/schema/childChunk.js";
-import { getGenAI, CHAT_MODEL } from "../../config/model.js";
-import { embedText } from "../../services/embedding.js";
+import { getChatProvider } from "../../config/providers/index.js";
+import { embedText } from "../../services/embedding.service.js";
+import retrievalTools from "../../services/retrievalTools.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,17 +31,6 @@ function buildSystemPrompt(today) {
 
 const getUserId = (req) =>
   req.user?._id ?? null;
-
-const extractTextFromResponse = (response) => {
-  const text = response?.text;
-  if (text) return text;
-
-  const parts = response?.candidates?.[0]?.content?.parts ?? [];
-  const combined = parts.map((part) => part?.text ?? "").join("").trim();
-
-  if (combined) return combined;
-  throw new Error("Chat model returned an empty response.");
-};
 
 /**
  * Returns the documents available in the knowledge base.
@@ -233,71 +223,6 @@ const getDocumentContext = async ({documentId,documentName,}) => {
 };
 
 /**
- * Tools exposed to the LLM.
- */
-const retrievalTools = [
-  {
-    functionDeclarations: [
-      {
-        name: "list_knowledge_base_documents",
-        description:
-          "List the documents available in the company's knowledge base, including each document's name, ID, and description. This is an internal discovery tool. Use it when you need to determine which document best matches the user's request, especially for a document-wide question. The user does not need to know or provide the document name or ID. Select the most appropriate document yourself.",
-        parameters: {
-          type: "OBJECT",
-          properties: {},
-        },
-      },
-
-      {
-        name: "search_documents",
-        description:
-          "Search internal company documents for information relevant to the user's question. Start with a targeted search. Use expanded=true only when the initial context is insufficient or the question needs broader topic coverage.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            query: {
-              type: "STRING",
-              description:
-                "A focused search query, or a broader query when expanded retrieval is needed.",
-            },
-            expanded: {
-              type: "BOOLEAN",
-              description:
-                "false for targeted retrieval; true only for broader retrieval after the initial context is insufficient.",
-            },
-          },
-          required: [
-            "query",
-            "expanded",
-          ],
-        },
-      },
-
-      {
-        name: "get_document_context",
-        description:
-          "Retrieve all parent sections of one specific document in document order. Use this only when the user's request genuinely requires understanding the entire document, such as a complete document summary or analysis of all requirements, rules, or exceptions. If the document is not explicitly named, use the knowledge-base document list to select the best matching document yourself. Do not ask the user for an internal document name or ID merely because the document was not named.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            documentId: {
-              type: "STRING",
-              description:
-                "The ID of the document selected from the knowledge-base document list.",
-            },
-            documentName: {
-              type: "STRING",
-              description:
-                "The document name if an exact name is known. Prefer documentId when available.",
-            },
-          },
-        },
-      },
-    ],
-  },
-];
-
-/**
  * Executes one retrieval tool.
  */
 const executeTool = async (name, args = {}) => {
@@ -345,76 +270,23 @@ const executeTool = async (name, args = {}) => {
   }
 };
 
-/**
- * Streams response text that is already present on a model response.
- * This avoids a second LLM call when the model already returned the final answer.
- */
-const streamResponseText = ({response,onEvent,}) => {
-  const candidate = response?.candidates?.[0];
-  const parts = candidate?.content?.parts || [];
-
-  if (!parts.length) {
-    return "";
-  }
-
-  let reply = "";
-
-  for (const part of parts) {
-    const text = typeof part?.text === "string" ? part.text : "";
-
-    if (!text) {
-      continue;
-    }
-
-    reply += text;
-
-    onEvent?.({
-      type: "text",
-      text,
-    });
-  }
-
-  return reply;
-};
-
-/**
- * Generates the final answer using Gemini streaming.
- *
- * onEvent receives:
- *
- * { type: "status", status: "generating" }
- * { type: "text", text: "..." }
- */
-const generateFinalAnswerStream = async ({contents,systemInstruction,onEvent,}) => {
+const generateFinalAnswerStream = async ({ messages, systemInstruction, onEvent }) => {
   onEvent?.({
     type: "status",
     status: "generating",
   });
 
-  const stream = await getGenAI().models.generateContentStream({
-      model: CHAT_MODEL,
-      contents,
-      config: {
-        systemInstruction,
-        temperature: 0.2,
-      },
-    });
-
+  const stream = getChatProvider().generateStream({
+    messages,
+    systemInstruction,
+    temperature: 0.2,
+  });
   let reply = "";
 
   for await (const chunk of stream) {
-    const text = chunk?.text || "";
-
-    if (!text) {
-      continue;
-    }
-
-    reply += text;
-
-    onEvent?.({
-      type: "text",
-      text,
-    });
+    if (chunk.type !== "text") continue;
+    reply += chunk.text;
+    onEvent?.({ type: "text", text: chunk.text });
   }
 
   if (!reply.trim()) {
@@ -434,13 +306,11 @@ const generateFinalAnswerStream = async ({contents,systemInstruction,onEvent,}) 
  */
 const runAgenticRAG = async ({query,historyMessages,systemInstruction,onEvent,}) => {
   try{
-    const contents = [
+    const messages = [
       ...historyMessages,
       {
         role: "user",
-        parts: [
-          {text: query,},
-        ],
+        content: query,
       },
     ];
 
@@ -461,31 +331,28 @@ const runAgenticRAG = async ({query,historyMessages,systemInstruction,onEvent,})
     });
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const response = await getGenAI().models.generateContent({
-          model: CHAT_MODEL,
-          contents,
-          config: {
-            systemInstruction,
-            temperature: 0.2,
-            tools: retrievalTools,
-          },
-        });
+      const response = await getChatProvider().generate({
+        messages,
+        systemInstruction,
+        temperature: 0.2,
+        tools: retrievalTools,
+      });
 
-      const functionCalls = response.functionCalls || [];
+      const functionCalls = response.toolCalls || [];
 
-      /**
-       * No more tools are required.
-       *
-       * The model already returned the final answer in this response,
-       * so stream that text instead of making an extra generation call.
-       */
       if (!functionCalls.length) {
         onEvent?.({
           type: "status",
           status: "generating",
         });
 
-        const reply = streamResponseText({response,onEvent,}) || await generateFinalAnswerStream({contents,systemInstruction,onEvent,});
+        let reply = "";
+        if (response.content) {
+          reply = response.content;
+          onEvent?.({ type: "text", text: reply });
+        } else {
+          reply = await generateFinalAnswerStream({ messages, systemInstruction, onEvent });
+        }
 
         if (!reply.trim()) {
           throw new Error(
@@ -499,9 +366,11 @@ const runAgenticRAG = async ({query,historyMessages,systemInstruction,onEvent,})
         };
       }
 
-      contents.push(response.candidates[0].content);
-
-      const functionResponseParts = [];
+      messages.push({
+        role: "assistant",
+        content: response.content,
+        toolCalls: functionCalls,
+      });
 
       for (const functionCall of functionCalls) {
         let result;
@@ -551,26 +420,20 @@ const runAgenticRAG = async ({query,historyMessages,systemInstruction,onEvent,})
           };
         }
 
-        functionResponseParts.push({
-          functionResponse: {
-            name: functionCall.name,
-            id: functionCall.id,
-            response: {result},
-          },
+        messages.push({
+          role: "tool",
+          toolCallId: functionCall.id,
+          name: functionCall.name,
+          content: JSON.stringify(result),
         });
       }
-
-      contents.push({
-        role: "user",
-        parts: functionResponseParts,
-      });
     }
 
     /**
      * Safety fallback if MAX_TOOL_ROUNDS is reached.
      * Still stream the final response.
      */
-    const reply = await generateFinalAnswerStream({contents,systemInstruction,onEvent,});
+    const reply = await generateFinalAnswerStream({ messages, systemInstruction, onEvent });
 
     return {
       reply,
@@ -744,10 +607,10 @@ const sendMessage = async (req, res) => {
     }
 
     const historyMessages = session.messages.slice(-10)
-        .map((item) => ({
-          role: item.role,
-          parts: [{text: item.content,}],
-        }));
+      .map((item) => ({
+        role: item.role,
+        content: item.content,
+      }));
 
     /**
      * Start SSE response.
