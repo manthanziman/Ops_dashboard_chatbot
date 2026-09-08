@@ -690,7 +690,7 @@ const sendMessage = async (req, res) => {
 
     if (streamStarted) {
       try {
-        res.write(`data: ${JSON.stringify({type: "error",error: "Failed to process message",})}\n\n`);
+        res.write(`data: ${JSON.stringify({type: "error",error: "Facing some issue while processing, please kindly try again after some time.",})}\n\n`);
       } catch {
         // Ignore write errors while closing stream.
       }
