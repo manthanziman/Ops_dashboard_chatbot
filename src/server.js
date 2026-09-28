@@ -1,67 +1,155 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import cors from 'cors';
-import dns from 'dns';
+require("dotenv").config();
 
-import connectDB from './db/dbConnection.js';
-import documentRouter from './routes/document.routes.js';
-import userRouter from './routes/user.routes.js';
-import chatRouter from './routes/chat.routes.js';
-import authRouter from './routes/auth.routes.js';
-import markdownChunkRoutes from "./routes/markdownChunk.routes.js";
+const express = require("express");
+const cors = require("cors");
+const mongoose = require("mongoose");
+const dns = require("dns");
+const jwt = require("jsonwebtoken");
 
-dns.setServers(['8.8.8.8', '8.8.4.4']);
-dotenv.config();
-connectDB();
+const { ApolloServer } = require("@apollo/server");
+const { expressMiddleware } = require("@as-integrations/express5");
+
+const {
+  typeDefs,
+  resolvers,
+  permissions,
+} = require("./routes/graphql");
 
 const PORT = process.env.PORT || 4000;
-const app = express();
+const MONGODB_URI = process.env.MONGODB_URI;
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  process.env.CLIENT_URL,
-].filter(Boolean);
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
+// ------------------------------------------------------------
+// Permission wiring
+// ------------------------------------------------------------
+
+function applyPermissions(resolverMap, permissionMap) {
+  const wrapped = {};
+
+  for (const typeName of Object.keys(resolverMap)) {
+    wrapped[typeName] = {};
+
+    for (const fieldName of Object.keys(resolverMap[typeName])) {
+      const resolver = resolverMap[typeName][fieldName];
+      const permission = permissionMap?.[typeName]?.[fieldName];
+
+      if (typeof permission !== "function") {
+        wrapped[typeName][fieldName] = resolver;
+        continue;
       }
 
-      callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+      wrapped[typeName][fieldName] = async (
+        parent,
+        args,
+        context,
+        info
+      ) => {
+        const allowed = await permission(
+          parent,
+          args,
+          context,
+          info
+        );
 
-app.use("/api/markdown-chunks",markdownChunkRoutes);
+        if (allowed === false) {
+          throw new Error("Not authorized");
+        }
 
-app.use(express.json());
-app.use('/api', authRouter);
-app.use('/api', documentRouter);
-app.use('/api', userRouter);
-app.use('/api', chatRouter);
+        return resolver(parent, args, context, info);
+      };
+    }
+  }
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ success: true, message: 'Server is healthy.' });
-});
+  return wrapped;
+}
 
-app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err);
+// ------------------------------------------------------------
+// MongoDB
+// ------------------------------------------------------------
 
-  const statusCode = Number.isInteger(err?.statusCode) && err.statusCode > 0 ? err.statusCode : 500;
+async function connectDB() {
+  if (!MONGODB_URI) {
+    throw new Error("MONGODB_URI is not defined in the environment.");
+  }
 
-  res.status(statusCode).json({
-    success: false,
-    error: "Internal server error",
+  await mongoose.connect(MONGODB_URI);
+
+  console.log("MongoDB connected");
+}
+
+// ------------------------------------------------------------
+// Server
+// ------------------------------------------------------------
+
+async function startServer() {
+  await connectDB();
+
+  const app = express();
+
+  app.use(
+    cors({
+      origin: "http://localhost:5173",
+      credentials: true,
+    })
+  );
+
+  app.use(express.json());
+
+  const apolloServer = new ApolloServer({
+    typeDefs,
+    resolvers: applyPermissions(resolvers, permissions),
   });
-});
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  await apolloServer.start();
+
+  // ----------------------------------------------------------
+  // GraphQL
+  // ----------------------------------------------------------
+
+  app.use(
+    "/graphql",
+    expressMiddleware(apolloServer, {
+      context: async ({ req, res }) => {
+        const authorization = req.headers.authorization || "";
+        const [, token] = authorization.match(/^Bearer\s+(.+)$/i) || [];
+        let user = null;
+
+        if (token) {
+          try {
+            user = jwt.verify(token, process.env.JWT_SECRET);
+          } catch {
+            user = null;
+          }
+        }
+
+        return {
+          req,
+          res,
+          user,
+        };
+      },
+    })
+  );
+
+  // ----------------------------------------------------------
+  // Health check
+  // ----------------------------------------------------------
+
+  app.get("/health", (req, res) => {
+    res.status(200).json({
+      status: "ok",
+    });
+  });
+
+  app.listen(PORT, () => {
+    console.log(
+      `Server ready at http://localhost:${PORT}/graphql`
+    );
+  });
+}
+
+startServer().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
