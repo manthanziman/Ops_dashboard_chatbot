@@ -1,3 +1,24 @@
 node_modules/
 .env
 output/
+
+# --------------------------- R&D files -------------------------
+src/auth
+src/config
+src/db
+src/services
+src/module
+
+src/operationsChatbot/constant.js
+src/operationsChatbot/modules/geminiChat.js
+src/operationsChatbot/models/dummySchema.js
+src/operationsChatbot/models/dummyService.js
+
+src/middlewares
+
+src/routes/auth.routes.js
+src/routes/chat.routes.js
+src/routes/document.routes.js
+src/routes/markdownChunk.routes.js
+src/routes/user.routes.js
+src/routes/graphql.js
