@@ -50,15 +50,6 @@ const retrievalTools = [
   {
     type: "function",
     function: {
-      name: "list_knowledge_base_documents",
-      description:
-        "List the documents available in the company's knowledge base, including each document's name, ID, and description. This is an internal discovery tool. Use it when you need to determine which document best matches the user's request, especially for a document-wide question. The user does not need to know or provide the document name or ID. Select the most appropriate document yourself.",
-      parameters: { type: "object", properties: {} },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "search_documents",
       description:
         "Search internal company documents for information relevant to the user's question. Start with a targeted search. Use expanded=true only when the initial context is insufficient or the question needs broader topic coverage.",
@@ -85,21 +76,10 @@ const retrievalTools = [
     function: {
       name: "get_document_context",
       description:
-        "Retrieve all parent sections of one specific document in document order. Use this only when the user's request genuinely requires understanding the entire document.",
+        "Retrieve all sections of The Hosteller Front Office Handbook in document order. Use only when the user requests a complete handbook summary or analysis.",
       parameters: {
         type: "object",
-        properties: {
-          documentId: {
-            type: "string",
-            description:
-              "The ID of the document selected from the knowledge-base document list.",
-          },
-          documentName: {
-            type: "string",
-            description:
-              "The document name if an exact name is known. Prefer documentId when available.",
-          },
-        },
+        properties: {},
       },
     },
   },
@@ -108,32 +88,6 @@ const retrievalTools = [
 // ---------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------
-const listKnowledgeBaseDocuments = async () => {
-  try {
-    const documents = await ChatService.getAllDocuments();
-
-    return {
-      found: documents.length > 0,
-      count: documents.length,
-      documents: documents.map((document) => ({
-        documentId: String(document._id),
-        name:
-          document.name ||
-          document.title ||
-          document.fileName ||
-          document.originalName ||
-          "Unnamed document",
-        description:
-          document.description ||
-          document.summary ||
-          "No description is available for this document.",
-      })),
-    };
-  } catch (err) {
-    return { error: "Failed fetch documents from knowledgebase." };
-  }
-};
-
 /**
  * Semantic child search followed by parent retrieval.
  */
@@ -183,7 +137,6 @@ const searchDocuments = async (queryText, topK) => {
       );
 
       results.push({
-        documentId: String(child.documentId),
         parentId,
         parentIndex: parent.index,
         pageNumber: child.pageNumber,
@@ -210,9 +163,9 @@ const searchDocuments = async (queryText, topK) => {
  * Retrieves every parent chunk belonging to one document.
  * Used only when the LLM determines that the entire document is required.
  */
-const getDocumentContext = async ({ documentId, documentName }) => {
+const getDocumentContext = async () => {
   try {
-    const document = await ChatService.getDocumentById(documentId);
+    const document = await ChatService.getHandbookDocument();
 
     if (!document) {
       return {
@@ -232,17 +185,6 @@ const getDocumentContext = async ({ documentId, documentName }) => {
 
     return {
       found: true,
-      document: {
-        documentId: String(document._id),
-        name:
-          document.name ||
-          document.title ||
-          document.fileName ||
-          document.originalName ||
-          "Unnamed document",
-        description: document.description || document.summary || null,
-      },
-      parentCount: parents.length,
       sections: parents.map((parent) => ({
         index: parent.index,
         text: parent.text,
@@ -255,9 +197,6 @@ const getDocumentContext = async ({ documentId, documentName }) => {
 
 const executeTool = async (name, args = {}) => {
   switch (name) {
-    case "list_knowledge_base_documents":
-      return listKnowledgeBaseDocuments();
-
     case "search_documents": {
       const query = String(args.query || "").trim();
 
@@ -277,14 +216,7 @@ const executeTool = async (name, args = {}) => {
     }
 
     case "get_document_context":
-      if (!args.documentId && !args.documentName) {
-        throw new Error("A documentId or documentName is required.");
-      }
-
-      return getDocumentContext({
-        documentId: args.documentId,
-        documentName: args.documentName,
-      });
+      return getDocumentContext();
 
     default:
       throw new Error(`Unknown tool requested: ${name}`);
@@ -401,17 +333,3 @@ exports.createChatSession = async (hostelId, userId) => {
   return session;
 };
 
-// ─── Get all chat session ────────────────────────────────────────────────────────
-exports.getAllChatSessions = async () => {
-  return ChatService.getAllChatSessions();
-};
-
-// ─── Get chat session by hostel ────────────────────────────────────────────────────────
-exports.getChatSessionsByHostel = async (hostelId) => {
-  return ChatService.getChatSessionsByHostel(hostelId);
-};
-
-// ─── Get chat session by id ────────────────────────────────────────────────────────
-exports.getChatSessionBySessionId = async (sessionId) => {
-  return ChatService.getChatSessionBySessionId(sessionId);
-};

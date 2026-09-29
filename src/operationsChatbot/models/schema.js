@@ -63,11 +63,6 @@ const documentSchema = new Schema(
       type: String,
       trim: true,
     },
-    description: {
-      type: String,
-      trim: true,
-      default: "",
-    },
     mimeType: { type: String, },
     size: { type: Number, },
     contentHash: { type: String, },

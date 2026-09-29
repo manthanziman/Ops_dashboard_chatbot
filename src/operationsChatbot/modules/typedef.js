@@ -19,9 +19,7 @@ const typeDefs = `
     }
 
     type Query{
-       getAllChatSessions: [ChatSession]
-       getChatSessionsByHostel(hostelId: ID): [ChatSession]
-       getChatSessionBySessionId(sessionId: ID): ChatSession
+       _empty: String
     }
 
     type Mutation{

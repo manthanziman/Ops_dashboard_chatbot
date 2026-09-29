@@ -21,33 +21,6 @@ exports.createChatSession = async ({ hostel, user, title = "New chat" } = {}) =>
     }
 };
 
-exports.getAllChatSessions = async () => {
-    try{
-        const chatSessions = await ChatSession.find();
-        return chatSessions;
-    }catch(error){
-        throw error;
-    }
-};
-
-exports.getChatSessionsByHostel = async (hostel) => {
-    try{
-        const chatSessions = await ChatSession.find({ hostel });
-        return chatSessions;
-    }catch(error){
-        throw error;
-    }
-};
-
-exports.getChatSessionBySessionId = async (sessionId) => {
-    try{
-        const chatSession = await ChatSession.findOne({sessionId});
-        return chatSession;
-    }catch(error){
-        throw error;
-    }
-};
-
 exports.updateChatSession = async (sessionId, message) => {
     try {
     const chatSession = await ChatSession.findOne({ sessionId });
@@ -77,18 +50,11 @@ exports.deleteChatSession = async (sessionId) => {
 };
 
 // ─── Document services ────────────────────────────────────────────────────────
-exports.getAllDocuments = async () => {
+exports.getHandbookDocument = async () => {
     try{
-        const documents = await Document.find().lean();
-        return documents;
-    }catch(error){
-        throw error;
-    }
-};
-
-exports.getDocumentById = async (documentId) => {
-    try{
-        const document = await Document.findById(documentId).lean();
+        const document = await Document.findOne({
+            name: "The Hosteller Front Office Handbook",
+        }).lean();
         return document;
     }catch(error){
         throw error;
