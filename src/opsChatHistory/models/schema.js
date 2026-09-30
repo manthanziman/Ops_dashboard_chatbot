@@ -1,58 +1,6 @@
 const mongoose = require("mongoose");
-const crypto = require("crypto");
 const Schema = mongoose.Schema;
 const { MONGOOSE_MODEL } = require("../constant");
-const { type } = require("os");
-
-// -------------------------------------------------------------------
-// Message Schema
-// -------------------------------------------------------------------
-const messageSchema = new Schema(
-  {
-    role: {
-      type: String,
-      enum: ["user", "assistant"],
-    },
-    content: {
-      type: String,
-      trim: true,
-    },
-  },
-  { timestamps: true }
-);
-
-// -------------------------------------------------------------------
-// Chat Session Schema
-// -------------------------------------------------------------------
-const chatSessionSchema = new Schema(
-  {
-    hostel: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.HOSTEL },
-    user: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.ADMIN_USER },
-    sessionId: {
-      type: String,
-      unique: true,
-      index: true,
-      trim: true,
-    },
-    title: {
-      type: String,
-      default: "New chat",
-      trim: true,
-    },
-    messages: [messageSchema],
-    lastMessageAt: {
-      type: Date,
-      default: Date.now,
-    },
-  },
-  { timestamps: true }
-);
-
-
-const ChatSession = mongoose.models[MONGOOSE_MODEL.CHAT_SESSION] || mongoose.model(
-  MONGOOSE_MODEL.CHAT_SESSION,
-  chatSessionSchema
-);
 
 // -------------------------------------------------------------------
 // Document Schema
@@ -119,6 +67,56 @@ const childChunkSchema = new mongoose.Schema(
 const ChildChunk = mongoose.models[MONGOOSE_MODEL.CHILD_CHUNK] || mongoose.model(
   MONGOOSE_MODEL.CHILD_CHUNK,
   childChunkSchema
+);
+
+// -------------------------------------------------------------------
+// Message Schema
+// -------------------------------------------------------------------
+const messageSchema = new Schema(
+  {
+    role: {
+      type: String,
+      enum: ["user", "assistant"],
+    },
+    content: {
+      type: String,
+      trim: true,
+    },
+  },
+  { timestamps: true }
+);
+
+// -------------------------------------------------------------------
+// Chat Session Schema
+// -------------------------------------------------------------------
+const chatSessionSchema = new Schema(
+  {
+    hostel: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.HOSTEL },
+    user: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.ADMIN_USER },
+    sessionId: {
+      type: String,
+      unique: true,
+      index: true,
+      trim: true,
+    },
+    title: {
+      type: String,
+      default: "New chat",
+      trim: true,
+    },
+    messages: [messageSchema],
+    lastMessageAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { timestamps: true }
+);
+
+
+const ChatSession = mongoose.models[MONGOOSE_MODEL.CHAT_SESSION] || mongoose.model(
+  MONGOOSE_MODEL.CHAT_SESSION,
+  chatSessionSchema
 );
 
 module.exports = {ChatSession, Document, ParentChunk, ChildChunk};

@@ -8,6 +8,7 @@ const jwt = require("jsonwebtoken");
 
 const { ApolloServer } = require("@apollo/server");
 const { expressMiddleware } = require("@as-integrations/express5");
+const { graphqlUploadExpress } = require("graphql-upload-minimal");
 
 const {
   typeDefs,
@@ -94,6 +95,7 @@ async function startServer() {
     })
   );
 
+  app.use("/graphql", graphqlUploadExpress());
   app.use(express.json());
 
   const apolloServer = new ApolloServer({
@@ -127,6 +129,7 @@ async function startServer() {
           req,
           res,
           user,
+          userId: user?.id ?? user?.sub ?? null,
         };
       },
     })

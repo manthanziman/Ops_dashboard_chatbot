@@ -9,6 +9,7 @@ const typeDefs = `
        id: ID!
        sessionId: String!
        title: String!
+       hostelId: ID
        messages: [Message]
     }
 
