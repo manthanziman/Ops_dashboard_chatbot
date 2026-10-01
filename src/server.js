@@ -87,10 +87,14 @@ async function startServer() {
   await connectDB();
 
   const app = express();
+  const allowedOrigins = [
+    process.env.CLIENT_URL,
+    "http://localhost:5173",
+  ].filter(Boolean);
 
   app.use(
     cors({
-      origin: "http://localhost:5173",
+      origin: allowedOrigins,
       credentials: true,
     })
   );
@@ -130,6 +134,8 @@ async function startServer() {
           res,
           user,
           userId: user?.id ?? user?.sub ?? null,
+          department: user?.department ?? null,
+          hostelId: user?.hostelId ?? null,
         };
       },
     })

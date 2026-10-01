@@ -25,7 +25,7 @@ const typeDefs = `
 
     type Mutation{
        chat(sessionId: ID, message: String): ChatResponse
-       createChatSession(hostelId: ID): ChatSession
+      createChatSession: ChatSession
     }
 `;
 

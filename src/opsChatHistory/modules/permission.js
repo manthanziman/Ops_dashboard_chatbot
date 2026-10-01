@@ -2,6 +2,8 @@ const { isAuthenticated } = require("../../middlewares/auth/permission");
 
 const permissions = {
  Query: {
+   getAllDocuments: isAuthenticated,
+   getAllHostels: isAuthenticated,
    getAllChatSessions: isAuthenticated,
    getChatSessionsByHostel: isAuthenticated,
    getChatSessionBySessionId: isAuthenticated,

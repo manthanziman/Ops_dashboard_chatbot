@@ -15,6 +15,10 @@ const resolvers = {
     updatedAt: (doc) => toISO(doc.updatedAt),
   },
 
+  Hostel: {
+    id: (hostel) => String(hostel._id ?? hostel.id),
+  },
+
   ChatSession: {
     hostelId: (session) => {
       const hostel = session.hostel;
@@ -23,8 +27,16 @@ const resolvers = {
   },
 
   Query: {
-    getDocumentById: async (_parent, { id }, { userId }, _info) => {
-      return DocumentController.getDocumentById(id, userId);
+    getAllDocuments: async () => {
+      return DocumentController.getAllDocuments();
+    },
+
+    getAllHostels: async () => {
+      return DocumentController.getAllHostels();
+    },
+
+    getDocumentById: async (_parent, { id }, _args, _info) => {
+      return DocumentController.getDocumentById(id);
     },
 
     getAllChatSessions: async (_parent, args, context, _info) => {
@@ -45,16 +57,16 @@ const resolvers = {
   },
 
   Mutation: {
-    uploadDocument: async (_parent, { file }, { userId }, _info) => {
-      return DocumentController.uploadDocument(file, userId);
+    uploadDocument: async (_parent, { file }, { userId, department }, _info) => {
+      return DocumentController.uploadDocument(file, userId, department);
     },
 
-    updateDocument: async (_parent, { id, file }, { userId }, _info) => {
-      return DocumentController.updateDocument(id, file, userId);
+    updateDocument: async (_parent, { id, file }, { department }, _info) => {
+      return DocumentController.updateDocument(id, file, department);
     },
 
-    deleteDocument: async (_parent, { id }, { userId }, _info) => {
-      return DocumentController.deleteDocument(id, userId);
+    deleteDocument: async (_parent, { id }, { department }, _info) => {
+      return DocumentController.deleteDocument(id, department);
     },
   },
 };

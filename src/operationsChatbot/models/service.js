@@ -5,18 +5,25 @@ const { nanoid } = require("nanoid");
 // const Crypto = require("crypto")
 
 // ─── Chat sessions services ────────────────────────────────────────────────────────
-exports.createChatSession = async ({ hostel, user, title = "New chat" } = {}) => {
+exports.createChatSession = async ({ hostel, title = "New chat" } = {}) => {
     try{
         const sessionId = nanoid();
         return ChatSession.create({
             hostel,
-            user,
             sessionId,
             title: String(title || "New chat").trim(),
             messages: [],
             lastMessageAt: new Date(),
         });
     }catch(error){
+        throw error;
+    }
+};
+
+exports.getChatSessionBySessionId = async (sessionId, hostelId) => {
+    try {
+        return await ChatSession.findOne({ sessionId, hostel: hostelId });
+    } catch (error) {
         throw error;
     }
 };

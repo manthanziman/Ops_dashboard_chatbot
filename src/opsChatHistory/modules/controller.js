@@ -15,13 +15,6 @@ const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS) || undefin
 // ---------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------
-const requireUser = (userId) => {
-  if (!userId) {
-    throw new Error("Authentication is required.");
-  }
-  return userId;
-};
-
 const assertValidId = (id) => {
   if (!mongoose.isValidObjectId(id)) {
     throw new Error("Invalid document id.");
@@ -243,16 +236,24 @@ const chunkDocument = async ({ buffer, documentId = null } = {}) => {
 
 
 // Retries, exponential backoff and retry-after handling are done by the SDK.
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  maxRetries: Number(process.env.EMBEDDING_MAX_RETRIES || 5),
-});
+let client;
+
+const getOpenAI = () => {
+  if (!client) {
+    client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      maxRetries: Number(process.env.EMBEDDING_MAX_RETRIES || 5),
+    });
+  }
+
+  return client;
+};
 
 // One API call for an array of texts. Vectors come back in input order.
 const embedBatch = async (texts) => {
   if (!Array.isArray(texts) || !texts.length) return [];
 
-  const response = await client.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: EMBEDDING_MODEL,
     input: texts,
     encoding_format: "float",
@@ -282,8 +283,11 @@ const embedChildren = async (children) => {
 };
 
 // ─── Upload document ────────────────────────────────────────────────────────
-exports.uploadDocument = async (upload, userId) => {
-  requireUser(userId);
+exports.uploadDocument = async (upload, userId, department) => {
+  if (department !== "Technology") {
+    throw new Error("Only Technology department users can manage documents.");
+  }
+
   const file = await readUpload(upload);
 
   const contentHash = hashText(file.buffer);
@@ -340,13 +344,15 @@ exports.uploadDocument = async (upload, userId) => {
 //   - hash has no match               -> new/changed: insert parent,
 //     re-split + re-embed only its children
 //   - old parent never matched        -> removed: delete it + its children
-exports.updateDocument = async (id, upload, userId) => {
-  requireUser(userId);
+exports.updateDocument = async (id, upload, department) => {
+  if (department !== "Technology") {
+    throw new Error("Only Technology department users can manage documents.");
+  }
   assertValidId(id);
 
   const file = await readUpload(upload);
 
-  const document = await DocumentService.findUserDocument(id, userId);
+  const document = await DocumentService.findActiveDocumentById(id);
 
   if (!document) {
     throw new Error("Document not found.");
@@ -429,11 +435,20 @@ exports.updateDocument = async (id, upload, userId) => {
 };
 
 // ─── Get document by id ────────────────────────────────────────────────────────
-exports.getDocumentById = async (id, userId) => {
-  requireUser(userId);
+exports.getAllDocuments = async () => {
+  const documents = await DocumentService.findActiveDocuments();
+  return Promise.all(
+    documents.map(async (document) => ({
+      ...document,
+      parentCount: await DocumentService.countParentsByDocumentId(document._id),
+    })),
+  );
+};
+
+exports.getDocumentById = async (id) => {
   assertValidId(id);
 
-  const document = await DocumentService.findUserDocument(id, userId);
+  const document = await DocumentService.findActiveDocumentById(id);
 
   if (!document) {
     throw new Error("Document not found.");
@@ -445,11 +460,13 @@ exports.getDocumentById = async (id, userId) => {
 };
 
 // ─── Delete document (hard delete with chunks) ────────────────────────────────────────────────────────
-exports.deleteDocument = async (id, userId) => {
-  requireUser(userId);
+exports.deleteDocument = async (id, department) => {
+  if (department !== "Technology") {
+    throw new Error("Only Technology department users can manage documents.");
+  }
   assertValidId(id);
 
-  const document = await DocumentService.findUserDocument(id, userId);
+  const document = await DocumentService.findActiveDocumentById(id);
 
   if (!document) {
     throw new Error("Document not found.");
@@ -461,6 +478,10 @@ exports.deleteDocument = async (id, userId) => {
 };
 
 // ─── Get all chat session ────────────────────────────────────────────────────────
+exports.getAllHostels = async () => {
+  return DocumentService.getAllHostels();
+};
+
 exports.getAllChatSessions = async () => {
   return DocumentService.getAllChatSessions();
 };

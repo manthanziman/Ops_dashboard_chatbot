@@ -29,12 +29,20 @@ function getISTDateTime() {
 // ---------------------------------------------------------------------
 // OpenAI API
 // ---------------------------------------------------------------------
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openai;
+
+const getOpenAI = () => {
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+
+  return openai;
+};
 
 async function embedText(text) {
-  const response = await openai.embeddings.create({
+  const response = await getOpenAI().embeddings.create({
     model: "text-embedding-3-small",
     input: text,
     dimensions: Number(process.env.OPENAI_EMBEDDING_DIMENSIONS || 768),
@@ -230,25 +238,29 @@ const executeTool = async (name, args = {}) => {
 // ─── Main Chat Handler ────────────────────────────────────────────────────────
 // Plain (non-streaming) mutation: runs the tool-calling loop to completion,
 // persists the exchange, and returns one ChatResponse - matching typedef.js.
-exports.chat = async (sessionId, message, userId = null) => {
+exports.chat = async (sessionId, message, hostelId) => {
   const text = String(message ?? "").trim();
 
   if (!text) {
     throw new Error("Message is required.");
   }
+  if (!hostelId) {
+    throw new Error("Hostel context is required.");
+  }
 
   let session = null;
 
   if (sessionId) {
-    session = await ChatService.getChatSessionBySessionId(sessionId);
+    session = await ChatService.getChatSessionBySessionId(sessionId, hostelId);
+    if (!session) {
+      throw new Error("Chat session not found.");
+    }
+  } else {
+    session = await ChatService.createChatSession({
+      hostel: hostelId,
+      title: text.slice(0, 40) || "New chat",
+    });
   }
-
-  // if (!session) {
-  //   session = await ChatService.createChatSession({
-  //     user: userId,
-  //     title: text.slice(0, 40) || "New chat",
-  //   });
-  // }
 
   const historyMessages = session.messages.slice(-5).map((item) => ({
     role: item.role,
@@ -265,7 +277,7 @@ exports.chat = async (sessionId, message, userId = null) => {
   let finalReply = "";
 
   while (loopCount < MAX_TOOL_ROUNDS) {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages,
       tools: retrievalTools,
@@ -324,12 +336,11 @@ exports.chat = async (sessionId, message, userId = null) => {
 };
 
 // ─── Create chat session ────────────────────────────────────────────────────────
-exports.createChatSession = async (hostelId, userId) => {
-  // NOTE: the original code checked hostel existence via an undefined
-  // `User` model before creating the session. No Hostel model was
-  // provided alongside these files, so that check is removed here - add
-  // it back (with the correct model) if you need that validation.
-  const session = await ChatService.createChatSession({ hostel: hostelId, user: userId });
-  return session;
+exports.createChatSession = async (hostelId) => {
+  if (!hostelId) {
+    throw new Error("Hostel context is required.");
+  }
+
+  return ChatService.createChatSession({ hostel: hostelId });
 };
 

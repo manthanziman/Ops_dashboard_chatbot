@@ -3,12 +3,12 @@ const ChatbotController = require("./controller");
 const resolvers = {
   
   Mutation: {
-    chat: async (_parent, { sessionId, message }, {userId}, _info) => {
-      return ChatbotController.chat(sessionId, message, userId);
+    chat: async (_parent, { sessionId, message }, { hostelId }, _info) => {
+      return ChatbotController.chat(sessionId, message, hostelId);
     },
 
-    createChatSession: async (_parent, { hostelId }, { userId }, _info) => {
-      return ChatbotController.createChatSession(hostelId, userId);
+    createChatSession: async (_parent, _args, { hostelId }, _info) => {
+      return ChatbotController.createChatSession(hostelId);
     },
   },
 };

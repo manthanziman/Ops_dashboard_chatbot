@@ -26,8 +26,7 @@ const messageSchema = new Schema(
 // -------------------------------------------------------------------
 const chatSessionSchema = new Schema(
   {
-    hostel: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.HOSTEL },
-    user: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.ADMIN_USER },
+    hostel: { type: Schema.Types.ObjectId, ref: MONGOOSE_MODEL.HOSTEL, required: true },
     sessionId: {
       type: String,
       unique: true,

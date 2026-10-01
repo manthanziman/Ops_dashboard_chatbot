@@ -33,8 +33,16 @@ const typeDefs = `
        id: ID!
     }
 
+    type Hostel{
+       id: ID!
+       name: String!
+       location: String!
+    }
+
     extend type Query{
+       getAllDocuments: [Document!]!
        getDocumentById(id: ID!): Document
+       getAllHostels: [Hostel!]!
        getAllChatSessions: [ChatSession]
        getChatSessionsByHostel(hostelId: ID): [ChatSession]
        getChatSessionBySessionId(sessionId: ID): ChatSession

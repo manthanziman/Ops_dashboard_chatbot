@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const {ChatSession, Document, ParentChunk, ChildChunk } = require("./schema");
+const { Hostel } = require("../../auth/models/schema");
 
 // ─── Document services ────────────────────────────────────────────────────────
 exports.findDuplicateDocument = async (contentHash) => {
@@ -18,14 +19,23 @@ exports.findKnowledgeBaseDocument = async () => {
     }
 };
 
-exports.findUserDocument = async (id, userId) => {
+exports.findActiveDocumentById = async (id) => {
     try{
         const document = await Document.findOne({
             _id: id,
-            userId,
             deletedAt: null,
         });
         return document;
+    }catch(error){
+        throw error;
+    }
+};
+
+exports.findActiveDocuments = async () => {
+    try{
+        return await Document.find({ deletedAt: null })
+            .sort({ createdAt: -1 })
+            .lean();
     }catch(error){
         throw error;
     }
@@ -194,6 +204,10 @@ exports.applyDocumentDiff = async ({
 };
 
 // ─── Chat session services ────────────────────────────────────────────────────────
+exports.getAllHostels = async () => {
+    return Hostel.find().sort({ name: 1 }).lean();
+};
+
 exports.getAllChatSessions = async () => {
     try{
         const chatSessions = await ChatSession.find();
