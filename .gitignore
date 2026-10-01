@@ -21,4 +21,4 @@ src/routes/chat.routes.js
 src/routes/document.routes.js
 src/routes/markdownChunk.routes.js
 src/routes/user.routes.js
-src/routes/graphql.js
+# src/routes/graphql.js
